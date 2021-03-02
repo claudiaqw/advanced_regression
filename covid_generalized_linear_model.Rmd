@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r echo=FALSE, warning=FALSE}
 library(dplyr)
+library(tidyverse)
 ```
 
 
@@ -45,6 +46,32 @@ europe.data <- original.data %>%
 ```{r}
 summary(europe.data)
 ```
+
+```{r}
+data.path = "data/csse_covid_19_daily_reports_us"
+
+data.df <- read.csv(file = "data/csse_covid_19_daily_reports_us/07-01-2020.csv")
+data.df$Date <- "2020-07-1"
+
+file_list <- list.files(path=data.path)
+
+for (f in file_list){
+  str.date = substring(f, 1, 10)
+  date <- as.Date(str.date, format="%d-%m-%Y")
+  print(f)
+  if (!is.na(date) & date > "2020-07-01"){
+    filepath = paste(data.path, "/", f, sep="")
+    data <- read.csv(file = filepath, header=F)
+    data$Date <- str.date
+    names(data) <- names(data.df) 
+    data.df <- rbind(data.df, data)
+  }
+  
+}
+```
+
+
+
 
 ### Modelo de regresión
 
