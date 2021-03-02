@@ -22,13 +22,18 @@ En esta sección ...
 ### Carga y transformación
 
 ```{r}
-carSpeeds <- read.csv(file = 'data/kaggle/covid_19_data.csv')
+original.data <- read.csv(file = 'data/owid-covid-data.csv')
+
+lapply(original.data, function(x) sum(is.na(x)))
 
 ```
 
-
-
 ### Análisis descriptivo
+
+```{r}
+summary(original.data)
+```
+
 
 
 ### Modelo de regresión
