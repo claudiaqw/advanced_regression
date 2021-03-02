@@ -9,6 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r echo=FALSE, warning=FALSE}
+library(dplyr)
+```
+
+
 ## Introducción
 
 
@@ -23,18 +28,23 @@ En esta sección ...
 
 ```{r}
 original.data <- read.csv(file = 'data/owid-covid-data.csv')
-
-lapply(original.data, function(x) sum(is.na(x)))
-
+summary(original.data)
 ```
 
 ### Análisis descriptivo
 
 ```{r}
-summary(original.data)
+europe.data <- original.data %>% 
+  select(continent, location, date, new_cases, new_deaths, reproduction_rate,
+         hosp_patients, icu_patients, hospital_beds_per_thousand, new_tests, positive_rate, population) %>% 
+  filter(continent == 'Europe', date >= '2020-07-01', location == 'Spain')
+
 ```
 
 
+```{r}
+summary(europe.data)
+```
 
 ### Modelo de regresión
 
