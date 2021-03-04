@@ -1,5 +1,5 @@
 ---
-title: "covid_generalized_linear_model"
+title: "Estimación de la mortalidad de la COVID-19"
 author: "Claudia Quintana Wong"
 date: "26/2/2021"
 output: html_document
@@ -9,13 +9,20 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r echo=FALSE, warning=FALSE}
+```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(dplyr)
 library(tidyverse)
+library(lubridate)
+library(funModeling)
+library(ggplot2)
+library(GGally)
+library(caret)
 ```
 
 
 ## Introducción
+
+Los modelos lineales generalizados son un extensión de los modelos de regresión lineal que se utilizan cuando la distribución de la variable dependiente no es normal.
 
 
 ## Desarrollo
@@ -24,57 +31,198 @@ En esta sección ...
 
 ### Descripción del *dataset*
 
+Los datos fueron tomados del
+
+https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_daily_reports_us.
+
+Las variables originales son:
+
+* Province_State: El nombre del estado dentro de Estados Unidos
+* Country_Region: El nombre del país. En todos los casos toma valor US.
+* Last_Update: La fecha más reciente en que el fichero fue actualizado.
+* Lat
+* Long_
+* Confirmed: Cantidad de casos confirmados agregados para el estado
+* Deaths: Cantidad de muertes agregadas para el estado
+* Recovered: Cantidad de casos recuperados para el estado
+* Active: cantidad de casos ativos que no han sido resueltos (Active cases = total cases - total recovered - total deaths)
+* FIPS: Federal Information Processing Standards. código que identifica a los condados en US.
+* Incident_Rate: casos por 100 000 habitantes
+* Total_Test_Results: Cantidad total de personas que se han hecho tests
+* People_Hospitalized: Cantidad de personas hospitalizadas (se dejó de tomar el 31 Agosto)
+* Case_Fatality_Ratio: Cantidad de muertes * 100/Cantidad de Casos confirmados
+* UID: identificador de fila
+* ISO3: identificador oficial de país
+* Testing_Rate: Cantidad de tests por 100.000 habitantes.  Total test results = Total test results(Positive + Negative)
+* Hospitalization_Rate: Cantidad de Hospitalizados / cantidad de casos. 
+
 
 ### Carga y transformación
 
 ```{r}
-original.data <- read.csv(file = 'data/owid-covid-data.csv')
-summary(original.data)
+data <- read.csv(file = 'data/covid_data_us.csv')
+```
+```{r}
+data$Last_Update <- as.Date(data$Last_Update)
+data$Date <- as.Date(data$Date)
+summary(data)
+```
+```{r}
+colSums(is.na(data))
+```
+En el dataset existen muchas filas que tienen valores Nan en alguna de las variables. En el caso de las variables ..., cerca de un 70% de los datos son descinocidos. Por esta razón no podemos eliminarlas. Por lo tanto, se recurre a la imputación de valores. Para la imputacióm se toma la media de los valores que ha tomado esa variable en ese mes y año en ese estado específico. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
+
+```{r}
+ampute <- function(df, index, state, date){
+  new.df <- df %>% 
+    filter(Province_State == state, month(Date) == month(date), year(Date) == year(date))
+  value <- mean(new.df[,index], na.rm = TRUE)
+  return(value)
+}
+
+data$Recovered[is.na(data$Recovered)] = 
+  ampute(data, 8, data$Province_State, data$Date)
+
+data$Total_Test_Results[is.na(data$Total_Test_Results)] = 
+  ampute(data, 12, data$Province_State, data$Date)
+
+data$People_Hospitalized[is.na(data$People_Hospitalized)] =
+  ampute(data, 13, data$Province_State, data$Date)
+
+data$Case_Fatality_Ratio[is.na(data$Case_Fatality_Ratio)] =
+  ampute(data, 14, data$Province_State, data$Date)
+
+data$Hospitalization_Rate[is.na(data$Hospitalization_Rate)] =
+  ampute(data, 18, data$Province_State, data$Date)
+
+data$People_Tested[is.na(data$People_Tested)] =
+  ampute(data, 20, data$Province_State, data$Date)
+
+data$Mortality_Rate[is.na(data$Mortality_Rate)] =
+  ampute(data, 21, data$Province_State, data$Date)
+
+```
+
+Tras aplicar el reemplazo de los valores desconocidos, se puede observar que el conjunto de datos queda libre de *missing values*.
+
+```{r}
+colSums(is.na(data))
+```
+Se toman los datos a prtir del 1ro de julio de 2020 puesto que los datos son más fiables.
+
+```{r}
+
+data.df <- data %>% 
+  filter(data$Date >= "2020-07-01")
+
 ```
 
 ### Análisis descriptivo
 
-```{r}
-europe.data <- original.data %>% 
-  select(continent, location, date, new_cases, new_deaths, reproduction_rate,
-         hosp_patients, icu_patients, hospital_beds_per_thousand, new_tests, positive_rate, population) %>% 
-  filter(continent == 'Europe', date >= '2020-07-01', location == 'Spain')
-
-```
-
 
 ```{r}
-summary(europe.data)
+plot_num(data.df)
 ```
 
 ```{r}
-data.path = "data/csse_covid_19_daily_reports_us"
+numeric_columns = sapply(data.df, is.numeric)
 
-data.df <- read.csv(file = "data/csse_covid_19_daily_reports_us/07-01-2020.csv")
-data.df$Date <- "2020-07-1"
-
-file_list <- list.files(path=data.path)
-
-for (f in file_list){
-  str.date = substring(f, 1, 10)
-  date <- as.Date(str.date, format="%d-%m-%Y")
-  print(f)
-  if (!is.na(date) & date > "2020-07-01"){
-    filepath = paste(data.path, "/", f, sep="")
-    data <- read.csv(file = filepath, header=F)
-    data$Date <- str.date
-    names(data) <- names(data.df) 
-    data.df <- rbind(data.df, data)
-  }
-  
-}
+boxplot(scale(data.df[, numeric_columns]), las=2, col='darkblue')
+```
+```{r}
+data.df %>% 
+  ggplot(aes(x=Confirmed, y=Deaths)) +
+  geom_point()
 ```
 
+```{r}
 
+data.df %>% 
+  ggplot(aes(x=Date, y=Confirmed)) + 
+  geom_line(color='#00AFBB', size = 2)
+
+```
+```{r}
+
+data.df %>% 
+  ggplot(aes(x=Date, y=Deaths)) + 
+  geom_line(color='#00AFBB', size = 1)
+
+```
 
 
 ### Modelo de regresión
 
+Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte. Las tasas de letalidad ayudan a entender la gravedad de la enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria". Por esta razón, este trabajo se centra en la estimación del índice de mortalidad en los Estados Unidos a partir de los datos recogidos hasta el momento.
+
+
+La tasa de mortalidad se puede calcular a partir de la cantidad de casos diagnosticados y la proporción qué representan los fallecidos. Al observar el gráfico se puede notar que el índice de mortalidad tiene una alta correlación con la cantidad de muertes. por esta razoón el problema se transforma en estimar el índice de letalidad suponiendo que conocemos la cantidad de casos y demás variables, pero no la cantidad de muertes.
+
+Se calcula la matriz de correlación para verificar dicha relación. Los datos no muestran tal relación.
+
+```{r}
+library(corrplot)
+ggcorr(data.df[,numeric_columns], label = T)
+```
+```{r}
+data.df %>% 
+  ggplot(aes(x=Mortality_Rate, y=Deaths)) +
+  geom_point()
+```
+
+
+```{r}
+barplot(data.df$Mortality_Rate, col="darkblue")
+```
+* Modelos lineales
+
+```{r}
+set.seed(42)
+
+covid.data <- data %>% 
+  select(Province_State, Confirmed, Deaths, Recovered, Active, Incident_Rate, Total_Test_Results, Case_Fatality_Ratio, Testing_Rate, Mortality_Rate)
+
+trainIndex <- createDataPartition(covid.data$Mortality_Rate, p = .7,
+                                  list = FALSE,
+                                  times = 1)
+training <- covid.data[ trainIndex,]
+testing <- covid.data[-trainIndex,]
+
+```
+
+
+
+```{r}
+
+fit.lm <- lm(Mortality_Rate ~ . - Deaths, data=covid.data) 
+
+summary(fit.lm)
+# The R2 is 47%, reasonable fit
+
+# Diagnosis
+par(mfrow=c(2,2))
+plot(fit.lm)
+
+```
+* Modelo lineal con logaritmo
+ 
+```{r}
+fit.lm.log <- lm(log(Mortality_Rate+1) ~ . - Deaths, data=covid.data) 
+summary(fit.lm.log)
+
+```
+```{r}
+par(mfrow=c(2,2))
+plot(fit.lm.log)
+```
+
+* Primer modelo GLM
+```{r}
+
+fit.glm <- glm(Mortality_Rate ~ . - Deaths, family = 'poisson', data=covid.data)
+summary(fit.glm)
+
+```
 
 
 ## Including Plots
@@ -83,3 +231,8 @@ for (f in file_list){
 
 
 ## Conclusiones
+
+
+## Bibliografía
+
+* https://apps.who.int/iris/bitstream/handle/10665/333857/WHO-2019-nCoV-Sci_Brief-Mortality-2020.1-spa.pdf
