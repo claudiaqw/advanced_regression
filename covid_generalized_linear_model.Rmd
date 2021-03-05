@@ -17,6 +17,7 @@ library(funModeling)
 library(ggplot2)
 library(GGally)
 library(caret)
+library(effects)
 ```
 
 
@@ -31,7 +32,7 @@ En esta sección ...
 
 ### Descripción del *dataset*
 
-Los datos fueron tomados del
+Los datos fueron tomados de 
 
 https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_daily_reports_us.
 
@@ -62,15 +63,19 @@ Las variables originales son:
 ```{r}
 data <- read.csv(file = 'data/covid_data_us.csv')
 ```
+
+Transformamos los campos de tipo date
+
 ```{r}
 data$Last_Update <- as.Date(data$Last_Update)
 data$Date <- as.Date(data$Date)
+
 summary(data)
 ```
 ```{r}
 colSums(is.na(data))
 ```
-En el dataset existen muchas filas que tienen valores Nan en alguna de las variables. En el caso de las variables ..., cerca de un 70% de los datos son descinocidos. Por esta razón no podemos eliminarlas. Por lo tanto, se recurre a la imputación de valores. Para la imputacióm se toma la media de los valores que ha tomado esa variable en ese mes y año en ese estado específico. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
+En el dataset existen muchas filas que tienen valores Nan en alguna de las variables. En el caso de las variables **People_Hospitalized** y **Hospitalization_Rate**, cerca de un 70% de los datos son descinocidos. Por esta razón no podemos eliminarlas. Por lo tanto, se recurre a la imputación de valores. Para la imputacióm se toma la media de los valores que ha tomado esa variable en ese mes y año en ese estado específico. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
 
 ```{r}
 ampute <- function(df, index, state, date){
@@ -83,23 +88,11 @@ ampute <- function(df, index, state, date){
 data$Recovered[is.na(data$Recovered)] = 
   ampute(data, 8, data$Province_State, data$Date)
 
-data$Total_Test_Results[is.na(data$Total_Test_Results)] = 
-  ampute(data, 12, data$Province_State, data$Date)
-
 data$People_Hospitalized[is.na(data$People_Hospitalized)] =
   ampute(data, 13, data$Province_State, data$Date)
 
-data$Case_Fatality_Ratio[is.na(data$Case_Fatality_Ratio)] =
-  ampute(data, 14, data$Province_State, data$Date)
-
 data$Hospitalization_Rate[is.na(data$Hospitalization_Rate)] =
   ampute(data, 18, data$Province_State, data$Date)
-
-data$People_Tested[is.na(data$People_Tested)] =
-  ampute(data, 20, data$Province_State, data$Date)
-
-data$Mortality_Rate[is.na(data$Mortality_Rate)] =
-  ampute(data, 21, data$Province_State, data$Date)
 
 ```
 
@@ -112,45 +105,44 @@ Se toman los datos a prtir del 1ro de julio de 2020 puesto que los datos son má
 
 ```{r}
 
-data.df <- data %>% 
-  filter(data$Date >= "2020-07-01")
-
+covid.data <- data %>% 
+  select(Province_State, Confirmed, Deaths, Recovered, Active, Incident_Rate, Total_Test_Results, People_Hospitalized, Case_Fatality_Ratio, Testing_Rate, Hospitalization_Rate, Date) %>% 
+  filter(data$Date >= "2020-07-01") %>% 
+  arrange(Date)
+  
 ```
 
 ### Análisis descriptivo
 
 
 ```{r}
-plot_num(data.df)
+plot_num(covid.data)
 ```
 
 ```{r}
-numeric_columns = sapply(data.df, is.numeric)
+numeric_cols = sapply(covid.data, is.numeric)
 
-boxplot(scale(data.df[, numeric_columns]), las=2, col='darkblue')
+boxplot(scale(covid.data[, numeric_cols]), las=2, col='darkblue')
 ```
 ```{r}
-data.df %>% 
+covid.data %>% 
   ggplot(aes(x=Confirmed, y=Deaths)) +
   geom_point()
 ```
 
 ```{r}
-
-data.df %>% 
+covid.data %>% 
   ggplot(aes(x=Date, y=Confirmed)) + 
   geom_line(color='#00AFBB', size = 2)
 
 ```
 ```{r}
 
-data.df %>% 
+covid.data %>% 
   ggplot(aes(x=Date, y=Deaths)) + 
   geom_line(color='#00AFBB', size = 1)
 
 ```
-
-
 ### Modelo de regresión
 
 Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte. Las tasas de letalidad ayudan a entender la gravedad de la enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria". Por esta razón, este trabajo se centra en la estimación del índice de mortalidad en los Estados Unidos a partir de los datos recogidos hasta el momento.
@@ -159,45 +151,37 @@ Según la OMS: "Una importante característica de las enfermedades infecciosas e
 La tasa de mortalidad se puede calcular a partir de la cantidad de casos diagnosticados y la proporción qué representan los fallecidos. Al observar el gráfico se puede notar que el índice de mortalidad tiene una alta correlación con la cantidad de muertes. por esta razoón el problema se transforma en estimar el índice de letalidad suponiendo que conocemos la cantidad de casos y demás variables, pero no la cantidad de muertes.
 
 Se calcula la matriz de correlación para verificar dicha relación. Los datos no muestran tal relación.
+Se puede notar que los pares de variables *(Incident_Rate, Active)*, *(Deaths, Confirmed)*, *(Recovered, Confirmed)*, *(Total_Test_Results, Deaths)*, *(Total_Test_Results, Confirmed)* tienen una alta correlación.
 
 ```{r}
 library(corrplot)
-ggcorr(data.df[,numeric_columns], label = T)
+ggcorr(covid.data[,numeric_cols], label = T)
 ```
 ```{r}
-data.df %>% 
-  ggplot(aes(x=Mortality_Rate, y=Deaths)) +
-  geom_point()
+barplot(covid.data$Case_Fatality_Ratio, col="darkblue")
 ```
 
+Dividemos el cojunto de datos en *training* y *test*.
 
-```{r}
-barplot(data.df$Mortality_Rate, col="darkblue")
-```
-* Modelos lineales
 
 ```{r}
 set.seed(42)
 
-covid.data <- data %>% 
-  select(Province_State, Confirmed, Deaths, Recovered, Active, Incident_Rate, Total_Test_Results, Case_Fatality_Ratio, Testing_Rate, Mortality_Rate)
-
-trainIndex <- createDataPartition(covid.data$Mortality_Rate, p = .7,
+trainIndex <- createDataPartition(c(covid.data$Province_State), p = .7,
                                   list = FALSE,
                                   times = 1)
 training <- covid.data[ trainIndex,]
 testing <- covid.data[-trainIndex,]
-
 ```
 
+
+* Modelos lineales
 
 
 ```{r}
 
-fit.lm <- lm(Mortality_Rate ~ . - Deaths, data=covid.data) 
-
+fit.lm <- lm(Case_Fatality_Ratio ~ ., data=training) 
 summary(fit.lm)
-# The R2 is 47%, reasonable fit
 
 # Diagnosis
 par(mfrow=c(2,2))
@@ -207,22 +191,75 @@ plot(fit.lm)
 * Modelo lineal con logaritmo
  
 ```{r}
-fit.lm.log <- lm(log(Mortality_Rate+1) ~ . - Deaths, data=covid.data) 
+fit.lm.log <- lm(log(Case_Fatality_Ratio+1) ~ . - Deaths, data=training) 
 summary(fit.lm.log)
 
-```
-```{r}
 par(mfrow=c(2,2))
 plot(fit.lm.log)
+
 ```
 
-* Primer modelo GLM
+* Primer modelo GLM: todas las variables
+
 ```{r}
 
-fit.glm <- glm(Mortality_Rate ~ . - Deaths, family = 'poisson', data=covid.data)
-summary(fit.glm)
+fit.glm.poisson.all <- glm(Deaths ~ . - Case_Fatality_Ratio, 
+                       family = 'poisson', data=training, offset = log(Confirmed))
+summary(fit.glm.poisson.all)
 
 ```
+
+```{r}
+exp(cbind(coef(fit.glm.poisson.all), confint(fit.glm.poisson.all)))
+```
+* GLM: seleccionando variables
+
+```{r}
+fit.glm.poisson <- glm(Deaths ~ . - Case_Fatality_Ratio - Active - Incident_Rate - 
+                 Hospitalization_Rate - Testing_Rate, 
+               family = 'poisson', data=training, offset = log(Confirmed))
+summary(fit.glm.poisson)
+
+```
+
+Coeficientes
+
+```{r}
+exp(cbind(coef(fit.glm.poisson), confint(fit.glm.poisson)))
+```
+```{r}
+
+plot(effect("Deaths", fit.glm.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="stars", ylab="rate", rug=FALSE, main="")
+# a very clear relation
+```
+
+
+
+
+
+plot(effect("LabelAppeal", fit.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="label appeal", ylab="rate", rug=FALSE, main="")
+# a very clear (but weaker) relation
+
+plot(effect("LabelAppeal:STARS", fit.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="label appeal", ylab="rate", rug=FALSE, main="")
+# a very clear relation
+
+# All effects on target:
+plot(allEffects(fit.poisson), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
+
+
+
+
+
+
+
+```{r}
+fit.glm.qpoisson <- glm(Deaths ~ . - Case_Fatality_Ratio - Active - Incident_Rate - 
+                 Hospitalization_Rate - Testing_Rate,
+               family = 'quasipoisson', data=covid.data, offset = log(Confirmed))
+summary(fit.glm.qpoisson)
+
+```
+
 
 
 ## Including Plots
