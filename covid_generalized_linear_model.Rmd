@@ -18,12 +18,16 @@ library(ggplot2)
 library(GGally)
 library(caret)
 library(effects)
+library(MASS)
+library(pscl)
 ```
-
 
 ## Introducción
 
-Los modelos lineales generalizados son un extensión de los modelos de regresión lineal que se utilizan cuando la distribución de la variable dependiente no es normal.
+Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte. Las tasas de letalidad ayudan a entender la gravedad de la enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria". Por esta razón, este trabajo se centra en la estimación del índice de mortalidad en los Estados Unidos a partir de los datos recogidos hasta el momento.
+
+Los modelos lineales generalizados son una extensión de los modelos de regresión lineal que se utilizan cuando la distribución de la variable dependiente no es normal.
+
 
 
 ## Desarrollo
@@ -72,13 +76,15 @@ data$Date <- as.Date(data$Date)
 
 summary(data)
 ```
+Analicemos la distribución de valores desconocidos en las variables:
+
 ```{r}
-colSums(is.na(data))
+barplot(colMeans(is.na(data)), las=2)
 ```
 En el dataset existen muchas filas que tienen valores Nan en alguna de las variables. En el caso de las variables **People_Hospitalized** y **Hospitalization_Rate**, cerca de un 70% de los datos son descinocidos. Por esta razón no podemos eliminarlas. Por lo tanto, se recurre a la imputación de valores. Para la imputacióm se toma la media de los valores que ha tomado esa variable en ese mes y año en ese estado específico. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
 
 ```{r}
-ampute <- function(df, index, state, date){
+impute <- function(df, index, state, date){
   new.df <- df %>% 
     filter(Province_State == state, month(Date) == month(date), year(Date) == year(date))
   value <- mean(new.df[,index], na.rm = TRUE)
@@ -86,13 +92,13 @@ ampute <- function(df, index, state, date){
 }
 
 data$Recovered[is.na(data$Recovered)] = 
-  ampute(data, 8, data$Province_State, data$Date)
+  impute(data, 8, data$Province_State, data$Date)
 
 data$People_Hospitalized[is.na(data$People_Hospitalized)] =
-  ampute(data, 13, data$Province_State, data$Date)
+  impute(data, 13, data$Province_State, data$Date)
 
 data$Hospitalization_Rate[is.na(data$Hospitalization_Rate)] =
-  ampute(data, 18, data$Province_State, data$Date)
+  impute(data, 18, data$Province_State, data$Date)
 
 ```
 
@@ -101,10 +107,9 @@ Tras aplicar el reemplazo de los valores desconocidos, se puede observar que el 
 ```{r}
 colSums(is.na(data))
 ```
-Se toman los datos a prtir del 1ro de julio de 2020 puesto que los datos son más fiables.
+En el conjunto de datos hay muchas variales que no aportan información a un modelo de regresión. Por lo tanto, se seleccionanun conjunto de las que se consideran que pudiera ser parte de algunos de los modelos a desarrollar. Además, se toman datos a partir del 1ro de julio de 2020 puesto que los datos son más fiables.
 
 ```{r}
-
 covid.data <- data %>% 
   select(Province_State, Confirmed, Deaths, Recovered, Active, Incident_Rate, Total_Test_Results, People_Hospitalized, Case_Fatality_Ratio, Testing_Rate, Hospitalization_Rate, Date) %>% 
   filter(data$Date >= "2020-07-01") %>% 
@@ -121,7 +126,6 @@ plot_num(covid.data)
 
 ```{r}
 numeric_cols = sapply(covid.data, is.numeric)
-
 boxplot(scale(covid.data[, numeric_cols]), las=2, col='darkblue')
 ```
 ```{r}
@@ -145,22 +149,31 @@ covid.data %>%
 ```
 ### Modelo de regresión
 
-Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte. Las tasas de letalidad ayudan a entender la gravedad de la enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria". Por esta razón, este trabajo se centra en la estimación del índice de mortalidad en los Estados Unidos a partir de los datos recogidos hasta el momento.
-
-
 La tasa de mortalidad se puede calcular a partir de la cantidad de casos diagnosticados y la proporción qué representan los fallecidos. Al observar el gráfico se puede notar que el índice de mortalidad tiene una alta correlación con la cantidad de muertes. por esta razoón el problema se transforma en estimar el índice de letalidad suponiendo que conocemos la cantidad de casos y demás variables, pero no la cantidad de muertes.
 
 Se calcula la matriz de correlación para verificar dicha relación. Los datos no muestran tal relación.
-Se puede notar que los pares de variables *(Incident_Rate, Active)*, *(Deaths, Confirmed)*, *(Recovered, Confirmed)*, *(Total_Test_Results, Deaths)*, *(Total_Test_Results, Confirmed)* tienen una alta correlación.
+Se puede notar que los pares de variables *(Incident_Rate, Active)*, *(Incident_Rate, Active)*
+*(Deaths, Confirmed)*, *(Recovered, Confirmed)*, *(Total_Test_Results, Deaths)*, *(Total_Test_Results, Confirmed)* tienen una alta correlación.
 
 ```{r}
 library(corrplot)
 ggcorr(covid.data[,numeric_cols], label = T)
 ```
 ```{r}
-barplot(covid.data$Case_Fatality_Ratio, col="darkblue")
+covid.data %>% 
+  ggplot(aes(x=Date, y=Case_Fatality_Ratio, color = Province_State)) + 
+  geom_line() +
+  geom_point()
+  
 ```
 
+```{r}
+
+covid.data %>% 
+  ggplot(aes(x=Confirmed, y=Deaths, group=Province_State, color = Province_State)) + 
+  geom_boxplot(fill="lightblue") +
+  labs(title = "Deaths by Confirmed", x = "", y = "", col = "")
+```
 Dividemos el cojunto de datos en *training* y *test*.
 
 
@@ -175,12 +188,20 @@ testing <- covid.data[-trainIndex,]
 ```
 
 
-* Modelos lineales
+## Modelos de Regresión
 
+Inicialmente, se presenta un modelo de regresión lineal en función de todas las variables del *dataset*.
+
+
+### Regresión lineal
+
+En esta sección se aplical modelos de regresión lineal clásicos para comparar las diferencias en interpretabilidad respecto a modelos lineales generalizados más complejos.
+
+* Modelo lineal simple
 
 ```{r}
 
-fit.lm <- lm(Case_Fatality_Ratio ~ ., data=training) 
+fit.lm <- lm(Case_Fatality_Ratio ~ . -Deaths, data=training) 
 summary(fit.lm)
 
 # Diagnosis
@@ -188,6 +209,13 @@ par(mfrow=c(2,2))
 plot(fit.lm)
 
 ```
+A pesar de la simplicidad del modelo lineal, se logra alcanzar un R_{2} considerable. Se puede notar que existen varias variables cuyos coeficientes tienen un peso positivo en el índice de mortalidad.
+
+#TODO: Determinar de los estados cual es la variable base
+
+Al analizar los coeficientes de las variables continuas, se puede llegar a la conclusión que la variable que mayor impacto positivo tiene es **Hospitalization_Rate**. Esto significa que para cada unidad de la variable objetivo se incrementa en  índice de hospitalización en un 0.2. Asimismo, la variable parece tener un efecto negtaivo en la variable dependiente.
+
+
 * Modelo lineal con logaritmo
  
 ```{r}
@@ -198,76 +226,127 @@ par(mfrow=c(2,2))
 plot(fit.lm.log)
 
 ```
+Al aplicar aplicar la función logratitmo sobre la variable dependendiente aumenta el R_{2}.
+
 
 * Primer modelo GLM: todas las variables
 
-```{r}
+En este caso para estimar la tasa de mortalidad se pone la cantidad de muertes como variable dependiente del modelo y luego se aplica una transformación para convertirlo en tasa. Esto se hace para aprovechar la utilidad de la familia de Poisson en la estimación de variables contadoras.  
 
+```{r}
 fit.glm.poisson.all <- glm(Deaths ~ . - Case_Fatality_Ratio, 
                        family = 'poisson', data=training, offset = log(Confirmed))
 summary(fit.glm.poisson.all)
 
 ```
+* Modelo LGLM: Selección de variables
 
 ```{r}
-exp(cbind(coef(fit.glm.poisson.all), confint(fit.glm.poisson.all)))
-```
-* GLM: seleccionando variables
-
-```{r}
-fit.glm.poisson <- glm(Deaths ~ . - Case_Fatality_Ratio - Active - Incident_Rate - 
-                 Hospitalization_Rate - Testing_Rate, 
-               family = 'poisson', data=training, offset = log(Confirmed))
-summary(fit.glm.poisson)
+glm.select <- glm(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized, 
+                       family = 'poisson', data=training, offset = log(Confirmed))
+summary(glm.select)
 
 ```
-
-Coeficientes
+Todas las vaiables tienen un p-valor muy pequeño por lo tanto influyen en la estimación de la variable objetivo. Sin embargo, se observa que la variable *Total_Test_Results* tiene un coeficiente positivo aunque muy pequeño, pero en compración con el resto, parece que es la que mayor incidencia tiene sobre el índice de mortalidad. Veamos cuánto influyen numéricamente en la variable objetivo. Invetimos el link, como el link es el logaritmo tomamos la exponencial. Aunque el modelo es sencillo, se puede notar que presenta ventaja sobrel el naive al reducir 
 
 ```{r}
-exp(cbind(coef(fit.glm.poisson), confint(fit.glm.poisson)))
+exp(cbind(coef(glm.select), confint(glm.select)))
+```
+Todos los coeficientes son muy similares y cercanos a 1. Vamos a incluir en el modelo el estado donde fueron registrados los casos. Cuando crece un número de hsopitalizados crece en la misma medida la tasa de mortalidad.
+
+* GLM: Incluyendo el estado
+
+```{r}
+glm.select.state <- glm(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized + Province_State, 
+                       family = 'poisson', data=training, offset = log(Confirmed))
+summary(glm.select.state)
+
+```
+Al analizar los betas se puede ver qué el estado inflye en gran medida en el índice de mortalidad. Analicemos los coeficientes reales del modelo.
+
+```{r}
+exp(cbind(coef(glm.select.state), confint(glm.select.state)))
+```
+
+#TODO: explicar detenidamente la incidencia sobre los estados.
+
+
+```{r}
+plot(effect("Active", glm.select.state), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="active", ylab="deaths", rug=FALSE, main="")
+# a very clear relation
+```
+
+```{r}
+plot(effect("Recovered", glm.select.state), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="Recovered", ylab="deaths", rug=FALSE, main="")
+# a very clear relation
 ```
 ```{r}
-
-plot(effect("Deaths", fit.glm.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="stars", ylab="rate", rug=FALSE, main="")
+plot(effect("Province_State", glm.select.state), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="State", ylab="deaths", rug=FALSE, main="")
 # a very clear relation
 ```
 
 
 
-
-
-plot(effect("LabelAppeal", fit.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="label appeal", ylab="rate", rug=FALSE, main="")
-# a very clear (but weaker) relation
-
-plot(effect("LabelAppeal:STARS", fit.poisson), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="label appeal", ylab="rate", rug=FALSE, main="")
-# a very clear relation
-
+```{r}
 # All effects on target:
-plot(allEffects(fit.poisson), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
-
-
-
-
-
-
+plot(allEffects(glm.select.state), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
+```
 
 ```{r}
-fit.glm.qpoisson <- glm(Deaths ~ . - Case_Fatality_Ratio - Active - Incident_Rate - 
-                 Hospitalization_Rate - Testing_Rate,
-               family = 'quasipoisson', data=covid.data, offset = log(Confirmed))
-summary(fit.glm.qpoisson)
+# All effects on target:
+plot(allEffects(glm.select), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
+```
+* Modelo GLM QuasiPoisson
 
+El modelo de Poisson asume que la varianza y la #TODO de son iguales. Sin embargo, en la práctica generalemnte existe diferencia. A este se le conoce como sobredispersión donde la varianza del índice de mortalidad es mayor que el que dice el modelo de poisson. Para modela esto se puede utilizar el modelo quassi-poisson o la binomial negativa.
+
+```{r}
+glm.select.state.qp <- glm(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized + Province_State, 
+                       family = 'quasipoisson', data=training, offset = log(Confirmed))
+summary(glm.select.state.qp)
+
+```
+Según el modelo, el parámetro de dispersión es muy grande por lo que existe una alta sobre-dispersión. Por lo tanto, es mejor utilizar el modelo quasi-poisson.
+
+```{r}
+exp(cbind(coef(glm.select.state.qp), confint(glm.select.state.qp)))
+```
+Aunque los coeficientes son bastante parecidos.
+Por tanto, sobre este conjunto de datos debemos utilizar la quasi-poisson porque la poisson no se ajusta a la realidad de los datos.
+
+Intentemos con la binomial negativa.
+
+* Modelo Binomial negativa
+
+```{r}
+glm.select.state.nb <- glm.nb(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized + Province_State, 
+                       data=training)
+summary(glm.select.state.nb)
+
+```
+```{r}
+glm.select.nb <- glm.nb(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized, 
+                       data=training)
+summary(glm.select.nb)
+```
+```{r}
+exp(cbind(coef(glm.select.nb), confint(glm.select.nb)))
+```
+
+## Predicción
+
+```{r}
+predictions = round(predict(glm.select.nb, newdata=testing, type = "response"), 0)
+head(predictions,20)
 ```
 
 
-
-## Including Plots
-
-
+#TODO: predictions
 
 
 ## Conclusiones
+
+El análisis no es preciso porque no tiene en cuenta la temporalidad de los datos.
 
 
 ## Bibliografía
