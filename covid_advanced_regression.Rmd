@@ -25,6 +25,7 @@ library(data.table)
 library(corrplot)
 library(GGally)
 library(glmnet)
+library(olsrr)
 ```
 
 ## Preparación de los datos
@@ -202,7 +203,6 @@ MAPE
 
 RMSE <- sqrt(mean((lm.pred.log - log(test$Deaths))^2))
 RMSE
-
 ```
 Para evaluar el modelo se calcula e R2, el Error absoluto medio porcentual (MAPE, del inglés *Mean absolute percentage error*) y el Error cuadrático medio (RMSE, del inglés *Root Mean Squared Error*). El R2 sobre el conjunto de test es más pequeño pero muy similar al de entrenamiento, como es de esperar, porque al utilizar tan pocas variables no puede existir *overfitting* aún.
 
@@ -292,7 +292,6 @@ all_output[grepl("R-squared",Texto,fixed=T),]
 Con este modelo se obtiene un R2 ajustado muy alto, por lo tanto se consigue el objetivo de los modelos explicativos. Apliquemos selección de variables sobre este modelo en base al p-value. Utilizaremos el conjunto de entranamiento inicial para ver la evolución en la selección. SIn embargo, se puede notar que se alcanza un R2 mayor utilizado validación cruzada.
 
 ```{r}
-library(olsrr)
 model = log(Deaths) ~ Incident_Rate*Confirmed + Recovered + Province_State + Cases_White*Cases_Black + 
   Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black
 
@@ -310,7 +309,6 @@ Intentemos explicar las variables del modelo.
 
 ```{r}
 linFit
-
 ```
 Para analizar los coeficientes debemos tener en cuenta que estamos prediciendo el log de la cantidad de muertes. Es evidente que la variable más importante es el estado al que pertenece la observación. #TODO
 
@@ -327,8 +325,10 @@ Esta sección está dedicada a encontrar un modelo para predecir, donde no es ta
 * Regresión lineal robusta
 * Ridge
 * Lasso
+* Elastic Net
+* PLS
 
-Los resultados de cada uno de los modelos serán comparados en función del RMSE y nos quedaremos con el que menor error alcanza. Cada uno de los modelos será probado con todas las variables y con una elección resultado de aplicar selección de variables stepwise. Además, para la evaluación será utilizado el método de cross-validation.
+Los resultados de cada uno de los modelos serán comparados en función del RMSE y nos quedaremos con el que menor error alcanza. Los modelos de regresión lineal y regresión ribusta será probado con todas las variables y con una elección resultado de aplicar selección de variables stepwise. Por otra parte, el resto solo será entranado utilizando las variables seleccionadas por el tiempo que demora entrenar estos modelos con todas las variables. Además, para la evaluación será utilizado el método de cross-validation, en el caso de regresión lineal y robusta no es necesario porque no tienen hiperparámetros.
 
 Inicialmente se aplica selección de variables retomando nuestros modelos completo y naive. Recordar que aunque le hemos llamado modelo completo algunas variables se han eliminado como fue explicado con anterioridad.
 
@@ -354,6 +354,7 @@ wise.model <- log(Deaths) ~ Date + Province_State + Confirmed + Recovered +
 * Regresión lineal (con los modelos lm.complete y wise.model)
 
 ```{r}
+
 lm.complete.t <- train(lm.complete,
                 data = train,
                 method = "lm",
@@ -365,6 +366,9 @@ wise.model.t = train(wise.model,
                 method = "lm",
                 trControl = ctrl,
                 preProcess=c('center', 'scale'))
+
+test_results$lm.completed = predict(lm.complete.t, test)
+test_results$lm.wise = predict(wise.model.t, test)
 ```
 
 * Regresión robusta (con los modelos lm.complete y wise.model)
@@ -375,21 +379,17 @@ rlm.complete <- rlm(lm.complete,data=train)
 
 rlm.wise <- rlm(wise.model,data=train)
 
+test_results$rlm.complete = predict(rlm.complete, test)
+test_results$rlm.wise = predict(rlm.wise, test)
 ```
 
 * Ridge
 
 ```{r}
-ridge_grid <- expand.grid(lambda = seq(0, .1, length = 100))
+ridge_grid <- expand.grid(lambda = seq(0, .1, length = 20))
 
-ridge.complete <- train(lm.complete, data = train,
-                    method='ridge',
-                    preProc=c('scale', 'center'),
-                    tuneGrid = ridge_grid,
-                    trControl=ctrl)
-
-
-ridge.wise <- train(wise.model, data = train,
+ridge.wise <- train(wise.model, 
+                    data = train,
                     method='ridge',
                     preProc=c('scale', 'center'),
                     tuneGrid = ridge_grid,
@@ -397,20 +397,15 @@ ridge.wise <- train(wise.model, data = train,
 
 plot(ridge.wise)
 ridge.wise$bestTune
-postResample(pred = test_results$ridge,  obs = test_results$price)
-
+test_results$ridge.wise <- predict(ridge.wise, test)
+postResample(pred = test_results$ridge.wise,  obs = test_results$deaths)
 
 ```
+
 * Lasso
 
 ```{r}
 lasso_grid <- expand.grid(fraction = seq(.01, 1, length = 20))
-
-lasso.complete <- train(lm.complete, data = train,
-                    method='lasso',
-                    preProc=c('scale','center'),
-                    tuneGrid = lasso_grid,
-                    trControl=ctrl)
 
 lasso.wise <- train(wise.model, data = train,
                     method='lasso',
@@ -418,64 +413,170 @@ lasso.wise <- train(wise.model, data = train,
                     tuneGrid = lasso_grid,
                     trControl=ctrl)
 
-plot(lasso_tune)
-lasso_tune$bestTune
-test_results$lasso <- predict(lasso_tune, testing)
-postResample(pred = test_results$lasso,  obs = test_results$price)
+plot(lasso.wise)
+lasso.wise$bestTune
+test_results$lasso.wise <- predict(lasso.wise, test)
+postResample(pred = test_results$lasso.wise,  obs = test_results$deaths)
+
+```
+* Elastic Net
+
+```{r}
+
+modelLookup('glmnet')
+elastic_grid = expand.grid(alpha = seq(0, .2, 0.01), lambda = seq(0, .1, 0.01))
+
+glmnet.wise <- train(wise.model, data = train,
+                     method='glmnet',
+                     preProc=c('scale','center'),
+                     tuneGrid = elastic_grid,
+                     trControl=ctrl)
+plot(glmnet.wise)
+glmnet.wise$bestTune
+test_results$glmnet.wise <- predict(glmnet.wise, test)
+postResample(pred = test_results$glmnet.wise,  obs = test_results$deaths)
+```
+
+* PLS
+
+```{r}
+pls.wise <- train(wise.model, data = train,
+                  method='pls',
+                  preProc=c('scale','center'),
+                  tuneGrid = expand.grid(ncomp = 2:8),
+                  trControl=ctrl)
+
+plot(pls.wise)
+test_results$pls.wise <- predict(pls.wise, test)
+postResample(pred = test_results$pls.wise, obs = test_results$deaths)
+```
+
+Teniendo en cuenta el RMSE obtenido por cada uno de los modelos, podemos notar que Elastic Net obtiene el menor. Sin embargo, un modelo tan complejo y no presentar grandes diferencias en métricas con Lasso, se considera que este último es una mejor opción. Elastic Net realmente no se considera la mejor porque 
+
+#### Cálculo de los intervalos de confianza
+
+```{r}
+
+linear <- lm(log(Deaths) ~ Incident_Rate*Confirmed, data = train)
+predictions <- exp(predict.lm(linear, newdata=test, interval="prediction", level=0.90))
+head(predictions)
+predictions=as.data.frame(predictions)
+predictions$real = exp(test_results$deaths)
+
+```
+
+```{r}
+predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
+# how many real observations are out of the intervals?
+mean(predictions$out==1)
+# the real coverage is around 7% and the nominal one is 10%, hence it's ok, 
+# but the intervals should be a bit narrower
 ```
 
 
-
-
-
-
+```{r}
+ggplot(predictions, aes(x=fit, y=real))+
+  geom_point(aes(color=out)) + theme(legend.position="none") +
+  xlim(20000, 1000000) + ylim(20000, 1000000)+
+  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
+  labs(title = "Prediction intervals", x = "Predicted Deaths", y="real Deaths")
+```
 
 
 
 ```{r}
+linFit <- lm(log(price) ~ bedsperbath:type + log(sqft) + longitude, data=training)
+# obtain the prediction intervals directly:
+predictions <- exp(predict.lm(linFit, newdata=testing, interval="prediction", level=0.90))
+head(predictions)
+predictions=as.data.frame(predictions)
+predictions$real = exp(test_results$price)
 
-test_results$lm.completed = predict(lm.complete.t, test)
-test_results$lm.wise = predict(wise.model.t, test)
+predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
+# how many real observations are out of the intervals?
+mean(predictions$out==1)
+# the real coverage is around 7% and the nominal one is 10%, hence it's ok, 
+# but the intervals should be a bit narrower
 
-test_results$rlm.complete = predict(rlm.complete, test)
-test_results$rlm.wise = predict(rlm.wise, test)
+ggplot(predictions, aes(x=fit, y=real))+
+  geom_point(aes(color=out)) + theme(legend.position="none") +
+  xlim(20000, 1000000) + ylim(20000, 1000000)+
+  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
+  labs(title = "Prediction intervals", x = "prediction",y="real price")
 
-test_results$ridge.complete <- predict(ridge.complete, test)
-test_results$ridge.wise <- predict(ridge_tune, test)
+# But what to do if we want to use a model with better prediction performance?
+# For instance, use the combination model
+# Then we cannot use the predict() function...
 
+# Final predictions:
+yhat = exp(test_results$comb)
+head(yhat) # show the prediction for 6 home prices
+hist(yhat, col="lightblue")
+# take care: asymmetric distribution
 
+y = exp(test_results$price)
+error = y-yhat
+hist(error, col="lightblue")
+# But the error is more symmetric
+
+# But we cannot use the information in the testing set to obtain the confidence intervals in the testing set
+# Hence: split the testing set in two parts, one to measure the size of the noise, and the other one to compute the CIs from that size
+
+# Let's use the first 100 homes in testing to compute the noise size
+noise = error[1:100]
+sd.noise = sd(noise)
+
+# Let's use the rest of the homes to validate the coverage
+# If noise is a normal variable, then a 90%-CI can be computed as
+lwr = yhat[101:length(yhat)] - 1.65*sd.noise
+upr = yhat[101:length(yhat)] + 1.65*sd.noise
+
+# Non-parametric way:
+lwr = yhat[101:length(yhat)] + quantile(noise,0.05, na.rm=T)
+upr = yhat[101:length(yhat)] + quantile(noise,0.95, na.rm=T)
+
+# Non-parametric way, robust against outliers, but with no confidence level:
+lwr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=1.5)$stats[1]
+upr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=1.5)$stats[5]
+# This is a useful approach for anomaly detection
+# points outside the intervals are outliers
+# these are extreme outliers
+lwr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=3)$stats[1]
+upr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=3)$stats[5]
+
+# Non-parametric way, even more robust against outliers
+lwr = yhat[101:length(yhat)] - 2.4*mad(noise) 
+upr = yhat[101:length(yhat)] + 2.4*mad(noise)
+# for normal data, sd=1.48*mad
+
+# For a symmetric distribution with zero mean, the mad is the 75th percentile of the distribution
+# That means, the following interval has confidence level 50% (if noise satisfies those assumptions):
+lwr = yhat[101:length(yhat)] - mad(noise) 
+upr = yhat[101:length(yhat)] + mad(noise)
+# it's called the probable error:  half of the values lies within the interval and half outside
+
+predictions = data.frame(real=y[101:length(y)], fit=yhat[101:length(yhat)], lwr=lwr, upr=upr)
+predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
+
+# how many real observations are out of the intervals?
+mean(predictions$out==1)
+# the real coverage of parametric approach is around 15% and the nominal one is 10%, hence it's ok, 
+# but the intervals should be a bit wider
+
+# the real coverage of non-parametric approach is around 15% and the nominal one is 10%, hence it's ok, 
+# but the intervals should be a bit wider
+
+# the real coverage of robust approach is around 8%. Here, no nominal value
+
+ggplot(predictions, aes(x=fit, y=real))+
+  geom_point(aes(color=out)) + theme(legend.position="none") +
+  xlim(20000, 1000000) + ylim(20000, 1000000)+
+  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
+  labs(title = "Prediction intervals", x = "prediction",y="real price")
 
 
 ```
 
-
-
-
-
-
-```{r}
-tuneGrid <- expand.grid(alpha = 1, lambda = seq(210 ,220, length = 100))
-
-lasso_tune <- train(Deaths~., 
-                    data = train,
-                    method = "glmnet",
-                    tuneGrid = tuneGrid,
-                    trControl = ctrl,
-                    preProcess=c('center', 'scale')
-)
-
-train_results <- predict(lasso_tune, train)
-postResample(pred = train_results,  obs = train$Deaths)
-```
-
-
-```{r}
-train_results <- predict(lasso_tune, data_exp)
-postResample(pred = train_results,  obs = data_exp$SalePrice)
-```
-
-
-### Modelo Predictivo
 
 
 
