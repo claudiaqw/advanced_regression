@@ -28,7 +28,7 @@ library(olsrr)
 
 ## Preparación de los datos
 
-Partimos del conjunto de datos del ejercicio de GLM que fue tomado https://covidtracking.com/data. Aplicamos los mismos filtros en la limpieza de información. Al incluir datos de vacunación en el análisis, solo se cuenta con dichos datos a partir del 24 de enero de 2021. Por esta razón, se ha decidido tomar solo los datos posteriores al 1ro de octubre de 2020 en la base de datos de casos diarios, para no tener desbalanceo respecto a los datos de vacunados.
+Partimos del conjunto de datos del ejercicio de GLM que fue tomado de https://covidtracking.com/data. Aplicamos los mismos filtros en la limpieza de información. Al incluir datos de vacunación en el análisis, solo se cuenta con dichos datos a partir del 24 de enero de 2021. Por esta razón, se ha decidido tomar solo los datos posteriores al 1ro de octubre de 2020 en la base de datos de casos diarios, para no tener desbalanceo respecto a los datos de vacunados.
 
 ```{r}
 data <- read.csv(file = 'data/covid_data_us.csv')
@@ -73,6 +73,7 @@ etnicity.data <- etnicity.data %>%
   dplyr::select(Date, State, Cases_White, Cases_Black, Deaths_White, Deaths_Black, Hosp_Total, Hosp_White, Hosp_Black)
 etnicity.data <- merge(etnicity.data, location.name, by.x = 'State', by.y='Location', all.x = TRUE)
 ```
+
 Para evitar el sesgo en el análisis respecto al color de piel se incluye información étnica de todos los estados. Se adicionan variables que explican la población total y la cantidad de personas con piel de color blanca y negra.
 
 ```{r}
@@ -115,6 +116,7 @@ summary(train)
 ggplot(train, aes(Deaths)) + geom_density(fill="lightblue") + 
   xlab("Deaths") + ggtitle("Deaths distribution")
 ```
+
 Según muestra el gráfico la mayor parte de los días en un estado hay entre 0 y 5000 fallecidos aproximadamente. Sin embargo, también se puede observar que hay días donde la cantidad de fallecidos supera los 30.000
 
 Visualicemos la función de densidad en función del logaritmo de la variable objetivo. 
@@ -123,6 +125,7 @@ Visualicemos la función de densidad en función del logaritmo de la variable ob
 ggplot(train, aes(log(Deaths))) + geom_density(fill="lightblue") + 
   xlab("Deaths") + ggtitle("Deaths distribution")
 ```
+
 ```{r}
 deaths_by_state = data.df %>% 
   dplyr::group_by(Province_State) %>% 
@@ -133,6 +136,7 @@ deaths_by_state %>%
   geom_bar(stat='identity') + 
   coord_flip()
 ```
+
 En el siguiente gráfico se muestra la cantidad de casos confirmados y la cantidad de fallecidos. Los colores se incluyen para diferenciar las curvas en cuanto a las ciudades. Se puede observar que, en general, las muertes tienden a aumentar mientras aumentan los positivos. Debemos tener en cuenta que el gráfico no muestra las muertes que pudieron causar esos casos positivos, para eso habría que hacer el análisis en los próximos 14 días pero sí nos da una medida de cómo pueden estar relacionadas estas variables.
 
 ```{r}
@@ -161,6 +165,7 @@ ggcorr_data <- data.df %>%
 ggcorr(ggcorr_data, label = T)
 
 ```
+
 Tras realizar un analísis descriptivo de los datos, se eliminan del análisis algunas variables para evitar multicolinealidad. En la matriz de correlación se observa que la variable **Active** y **Incident_Rate** tienen una alta correlación positiva por lo tanto es aconsejable eliminar una de las dos. Puesto que la variable Active se puede calcular en función de los casos **Confirmed**, **Recovered** y *Deaths*, la eliminamos. Asimismo, la variable **Incident_Rate** tiene correlación lineal con **Confirmed** por lo que la obviamos también. Existen otros pares de variables que tienen una alta correlación, sin embargo, como nuestro análisis está enfocado en determinar qué factores influyen en la mortalidad de COVID las preservaremos para valorar su aporte a los modelos.
 
 
@@ -179,7 +184,7 @@ En esta sección se desarrollan y comparan entre sí un conjunto de modelos de r
 
 ##  Modelos de Regresión Lineal
 
-Los modelos de regresión lineal al expresar la variable objetivo en función del resto de variables nos permiten de forma trivial medir la significancia de cada predictor. Por lo tanto, son útiles para seleccionar la cantidad y cuáles variables son adecuadas para explicar. En este trabajo, se desarrollan inicialmente un grupo de modelos lineales para entender la importancia de las variables en la predicción de la variable objetivo.
+Los modelos de regresión lineal al expresar la variable objetivo en función del resto de variables nos permiten de forma intuitiva medir la significancia de cada predictor. Por lo tanto, son útiles para seleccionar la cantidad y cuáles variables son adecuadas para explicar. En este trabajo, se desarrollan inicialmente un grupo de modelos lineales para entender la importancia de las variables en la predicción de la variable objetivo.
 
 * El primer modelo tomará el predictor que se ha detectado anteriormente que tiene gran influencia, que es la cantidad de casos confirmados.
 
@@ -187,7 +192,7 @@ Los modelos de regresión lineal al expresar la variable objetivo en función de
 lm <- lm(log(Deaths) ~ Confirmed, data=train)
 summary(lm)
 ```
-El modelo alcanza un R2 del 48%, lo cual reafirma que estas variables son importantes para determinar la variable dependiente. 
+El modelo alcanza un R2 del 48%, lo cual reafirma que esta variable es importante para determinar la variable dependiente. 
 
 ```{r}
 lm.pred.log <- predict(lm, newdata=test)
@@ -254,7 +259,7 @@ En esta sección nos concentramos en seleccionar dos modelos: un primer modelo, 
 
 Para el desarrollo del modelo explicativo utilizaremos todo el conjunto de datos. El objetivo es obtener un modelo que involucre las variables más relevantes y que el número de variables sea adecuado para la interpretación. Con el fin de simplificar la explicabilidad las variables no tengan ninguna transformación.
 
-Se desarrollan modelos basado en selección de variables.
+Se desarrollan dos modelos basado en selección de variables, en el primero se propone intuitivamente un modelo y se aplica selección de variables y en el segundo se escogen las variables con el método de *forward* y se aplica lasso.
  
 
 Los modelos llamados **ensembles** se han descartado en la producción de este modelo explicable porque realizan transformaciones a las variables que son muy difíciles de explicar.
@@ -267,11 +272,14 @@ ctrl <- trainControl(method = "repeatedcv",
                      number = 10)
 ```
 
+
 Al analizar los coeficientes del modelo lineal completo, teniendo en cuenta cada una de las variables se decide el siguiente modelo. Es evidente en el modelo completo que la variable **Province_State** influye mucho en la variable objetivo. Asimismo **Incident_Rate**, pero antes habíamos comprobado que tiene una alta ralación con los casos confirmados. Intentaremos aplicar una interacción entre estas dos variables.
+
+* Modelo intuitivo y selección de variables
 
 ```{r}
 set.seed(43)
-my_lm <- train(log(Deaths) ~ Incident_Rate*Confirmed/Population + Recovered + Province_State + Cases_White*Cases_Black + 
+my_lm <- train(log(Deaths) ~ Incident_Rate*Confirmed + Recovered + Province_State + Cases_White*Cases_Black + 
   Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black,
                 data = train,
                 method = "lm",
@@ -291,7 +299,6 @@ model = log(Deaths) ~ Incident_Rate*Confirmed + Recovered + Province_State + Cas
   Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black
 
 linFit <- lm(model, data=train)
-
 ols_step_forward_p(linFit) # forward based on p-value
 
 ```
@@ -305,7 +312,78 @@ Intentemos explicar las variables del modelo.
 ```{r}
 linFit
 ```
-Para analizar los coeficientes debemos tener en cuenta que estamos prediciendo el log de la cantidad de muertes. Es evidente que la variable más importante es el estado al que pertenece la observación. #TODO
+
+Para analizar los coeficientes debemos tener en cuenta que estamos prediciendo el log de la cantidad de muertes. Es evidente que la variable más importante es el estado al que pertenece la observación.
+
+```{r}
+exp(cbind(coef(linFit), confint(linFit)))
+```
+Los coeficientes definen la variación que experimenta la cantidad de fallecidos en un estado al aumentar en una unidad una variable independiente y dejando fijas el resto. A partir de los coeficientes se puede concluir que:
+
+* El estado base sobre el que se construyeron las variables *dummies* es Alabama, lo cual significa que todos los coeficientes de las variables relativas al estado están expresados en función de la cantidad de muertes en el estado de Alabama.
+* Por cada persona que muere en el estado de Alabama, aproximadamente la cantidad de fallecidos en California aumenta en 5, en el estado de la Florida aumenta en 9 y así con el resto de las variables.
+* La cantidad de muertes aumenta en un 0.9 por cada persona de color negro. En esa misma proporción aumenta cuando una persona blanca se confirma positivo, lo cual quiere decir que no existe diferencia en cuanto al color de la piel de las personas respecto al número de fallecidos.
+* La relación del resto de las variables no relacionadas con el estado no aportan un crecimiento ni decrecimiento especial en la variable dependiente.
+
+Aunque este modelo es lineal y sencillo, la variable **Province_State** incluye tantas variables consigo que hace que el resto de variables pierda significancia y no tengan buenos betas. Por esta razón y a pesar de que este modelo cumple con las condiciones de un buen modelo explicativo aplicaremos otra técnica de selección de variables.
+
+
+* Selección de variables con forward y aplicación de lasso
+
+
+```{r}
+library(olsrr)
+
+smart.model <- log(Deaths) ~ .- Lat -Long_ -Population -Black -White
+
+smart.fit <- lm(smart.model, data=train)
+
+ols_step_forward_p(smart.fit)
+
+```
+Tras la aplicación del método forward para la selacción de variables se obtiene el siguiente modelo:
+
+```{r}
+
+forward.model <- log(Deaths) ~ Province_State + Deaths_White + Date + Incident_Rate + 
+  Case_Fatality_Ratio + Deaths_Black + Testing_Rate + Hosp_Total + 
+  Administered_Fed_LTC_Dose1 + Hosp_Black + Cases_White + Cases_White + Active
+
+
+lasso_grid <- expand.grid(fraction = seq(.01, 1, length = 20))
+
+lasso.wise.tune <- train(forward.model, data = train,
+                    method='lasso',
+                    preProc=c('scale','center'),
+                    tuneGrid = lasso_grid,
+                    trControl=ctrl)
+
+pred.lasso <- predict(lasso.wise.tune, test)
+postResample(pred = pred.lasso,  obs = log(test$Deaths))
+```
+Este modelo obtiene un RMSE de un 0.12 y un R2 del 99% por lo que es un modelo que obtiene muy buenos resultados. Analicemos los coeficientes de los predictores.
+
+```{r}
+coef <- predict(lasso.wise.tune$finalModel, type='coef', s = 30)
+coef.df <- as.data.frame(coef)
+coef.df <- cbind(name = rownames(coef.df), coef.df)
+
+coef.real <- coef.df %>% 
+  dplyr::select(name, coefficients) %>% 
+  filter(coefficients != 0, !grepl("Province",name)) 
+
+coef.real$coefficients <- exp(coef.real$coefficients)
+coef.real
+
+```
+
+Nos concentraremos en los coeficientes de las variables numéricas aunque la variable **Province_State** no se debe eliminar porque aporta mucho. De acuerdo a los coeficientes del modelos diferentes de cero podemos interpretar que:
+
+* Por cada persona de color blanco que muere, aumenta la cantidad de fallecidos en 1.85. O sea, que muere otra persona de otra etnicidad pero con menos probabilidad que si su color de piel es blanco. Lo cual tiene sentido teniendo en cuenta el color de piel de la mayor parte de la población americana.
+* Por cada persona negra que muere, la cantidad de fallecidos aumenta en 1.13 La interpretación de estas variables concuerda con la interpretación del modelo anterior de que el color de la piel de una persona no determine la probabilidad de morir por COVID-19.
+* Muy relacionada con la variable anterior está la cantidad de casos de personas de color blanco, por cada persona blanca que se enferma aumenta el número de fallecidos en un 1.01. Lo que quiere decir que 100 personas blancas enfermas aumentan en 101 la cantidad de fallecidos.
+* En este modelo aparece la variable **Administered_Fed_LTC_Dose1** que corresponde a la cantidad de personas que le ha sido administrada la primera dosis. Se puede notar que no tiene una gran influencia, sin embargo, era de esperar a partir de los pocos datos y del poco tiempo que se lleva aplicando. Conviene hacer un analisis en trabajos futuros sobre la influencia a 30 días.
+* Permanece el hecho de que las variables relacionadas con el estado son las que mas peso tienen. En un futuro se recomienda hacer un estudi localizado para evitar este tipo de problemas.
 
 
 ### Modelo Predictivo
