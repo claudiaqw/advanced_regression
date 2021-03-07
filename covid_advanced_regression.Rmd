@@ -1,5 +1,5 @@
 ---
-title: "Regresión Avanzad para la estimación de fallecidos de COVID-19"
+title: "Regresión Avanzada para la estimación de fallecidos de COVID-19"
 author: "Claudia Quintana Wong"
 date: "26/2/2021"
 output: html_document
@@ -11,9 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Introducción
 
-El objetivo de este trabajo es concebir y diseñar dos modelos, uno explicativo y otro predictivo, que nos permitan predecir la cantidad de muertes de COVID-19 en Estados Unidos en función de un conjunto de variables. Consiste en un problema de regresión pues la variable a predecir toma valores numéricos.
-
-Se recoge información de tres fuentes diferentes. Se tienen datos de casos reportes genéricos de COVID-19, de reportes de vacunación en los últimos meses y de casos diarios con diferenciación de raza y etnia.
+Las tasas de letalidad ayudan a entender la gravedad de una enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria. El objetivo de este trabajo es concebir y diseñar dos modelos, uno explicativo y otro predictivo, que nos permitan predecir la cantidad de muertes de COVID-19 en Estados Unidos en función de un conjunto de variables. Consiste en un problema de regresión pues la variable a predecir toma valores numéricos. Se recoge información de tres fuentes diferentes. Se tienen datos de casos reportes genéricos de COVID-19, de reportes de vacunación en los últimos meses y de casos diarios con diferenciación de raza y etnia.
 
 ```{r message=FALSE, echo=FALSE}
 
@@ -36,7 +34,6 @@ Partimos del conjunto de datos del ejercicio de GLM que fue tomado https://covid
 data <- read.csv(file = 'data/covid_data_us.csv')
 data$Last_Update <- as.Date(data$Last_Update)
 data$Date <- as.Date(data$Date)
-#covid.data <- na.omit(covid.data)
 data <- data %>% 
   dplyr::select(Province_State, Lat, Long_, Confirmed, Deaths, Recovered, Active, Incident_Rate, 
          Total_Test_Results, Case_Fatality_Ratio, 
@@ -177,14 +174,14 @@ subset <- data.df %>%
 
 ## Modelos de Regresión
 
-En esta sección se desarrollan y comparan entre sí un conjunto de modelos de regresión que dan solución al problema de predicción actual. Aunque hemos comprobado la complejidad de la distribución de los datos, inicialmente se presentan modelos de regresión lineal simples, con el objetivo de comparar y contar con un *baseline* que permita establecer un umbral de mejora. Teniendo en cuenta que en los datos existe un error inherente que no puede ser explicado por los modelos matemáticos, esto nos permitirá medir el rendimiento de los modelos avanzados que serán presentados posteriormente.
+En esta sección se desarrollan y comparan entre sí un conjunto de modelos de regresión que dan solución al problema de predicción actual. Aunque hemos comprobado la complejidad de la distribución de los datos, inicialmente se presentan modelos de regresión lineal simples, con el objetivo de comparar y contar con un *baseline* que permita establecer un umbral de mejora. Teniendo en cuenta que en los datos existe un error irreducible que no puede ser explicado por los modelos matemáticos, esto nos permitirá medir el rendimiento de los modelos avanzados que serán presentados posteriormente.
 
 
 ##  Modelos de Regresión Lineal
 
 Los modelos de regresión lineal al expresar la variable objetivo en función del resto de variables nos permiten de forma trivial medir la significancia de cada predictor. Por lo tanto, son útiles para seleccionar la cantidad y cuáles variables son adecuadas para explicar. En este trabajo, se desarrollan inicialmente un grupo de modelos lineales para entender la importancia de las variables en la predicción de la variable objetivo.
 
-* El primer modelo tomará el predictor que se ha detectado anteriormente que más influye, que es la cantidad de casos confirmados.
+* El primer modelo tomará el predictor que se ha detectado anteriormente que tiene gran influencia, que es la cantidad de casos confirmados.
 
 ```{r}
 lm <- lm(log(Deaths) ~ Confirmed, data=train)
@@ -206,14 +203,14 @@ RMSE
 ```
 Para evaluar el modelo se calcula e R2, el Error absoluto medio porcentual (MAPE, del inglés *Mean absolute percentage error*) y el Error cuadrático medio (RMSE, del inglés *Root Mean Squared Error*). El R2 sobre el conjunto de test es más pequeño pero muy similar al de entrenamiento, como es de esperar, porque al utilizar tan pocas variables no puede existir *overfitting* aún.
 
-* El segundo modelo de regresión lineal es el que utiliza todas las variables. No se tienen en cuenta solo algunas que no aportan información más que identificativa a los datos y el modelo completo identifica que están correlacionadas con la variable dependiente y le asigna betas NAs.
+* El segundo modelo de regresión lineal es el que utiliza todas las variables. No se tienen en cuenta solo algunas que no aportan información más que identificativa a los datos y otras que el modelo completo identifica que están correlacionadas con la variable dependiente y le asigna betas NAs.
 
 
 ```{r}
 lm.all <- lm(log(Deaths) ~ .- Lat -Long_ -Population -Black -White, data=train)
 summary(lm.all) 
 ```
-En este modelo, que incluyen todos los predictores posibles, está sobre-ajustado obteniendo un R2 de un 98%.
+Este modelo, que incluye todos los predictores posibles, está sobre-ajustado obteniendo un R2 de un 98%.
 
 ```{r}
 lm.pred.log.all <- predict(lm.all, newdata=test)
@@ -232,7 +229,7 @@ En este modelo el R2 da mayor en el conjunto de test que en el de entrenamiento,
 
 Por último, presentaremos el más simple de los modelos y que predice con un valor fijo. Este modelo es el que usaremos como benchmark, porque es el equivalente a predecir con un número aleatorio.
 
-* El tercer modelo de regresión lineal es el que predice con la media y nos referiremos a él como *Naive*.
+* El tercer modelo de regresión lineal es el que predice con la media y nos referiremos a él como *naive*.
 
 ```{r}
 lm.naive <- lm(log(Deaths) ~ 1, data=train)
@@ -249,18 +246,16 @@ RMSE
 ```
 En este caso, no se puede utilizar el R2 porque la desviación estándar de una constante es 0 por lo que para posteriores análisis con modelos avanzados solo podremos utilizar el RMSE y el MAPE para comparar con el modelo *naive*. Este modelo nos ayuda a decidir cuán grande es el error irreducible.
 
-## Modelos de regresión Avanzada
+## Modelos de Regresión Avanzada
 
 En esta sección nos concentramos en seleccionar dos modelos: un primer modelo, lo llamaremos **Modelo Explicativo** que nos permita interpretar las variables y explicar la predicción y otro modelo, **Modelo Predictivo** que se centre en obtener buenas predicciones.
 
 ### Modelo Explicativo
 
-Para el desarrollo del modelo explicativo utilizaremos todo el conjunto de datos. El objetivo es obtener un modelo que involucre las variables más relevantes y que el número de variables sea adecuado para la interpretación, Con el fin de simplificar la explicabilidad, procuraremos que las variables no tengan ninguna transformación.
+Para el desarrollo del modelo explicativo utilizaremos todo el conjunto de datos. El objetivo es obtener un modelo que involucre las variables más relevantes y que el número de variables sea adecuado para la interpretación. Con el fin de simplificar la explicabilidad las variables no tengan ninguna transformación.
 
-Se desarrollan dos modelos;
-
-* Basado en selección de variables: 
-* Basado en regresión lasso: 
+Se desarrollan modelos basado en selección de variables.
+ 
 
 Los modelos llamados **ensembles** se han descartado en la producción de este modelo explicable porque realizan transformaciones a las variables que son muy difíciles de explicar.
 
@@ -289,7 +284,7 @@ all_output <- data.table(Texto=capture.output(summary(my_lm)))
 all_output[grepl("R-squared",Texto,fixed=T),]
 
 ```
-Con este modelo se obtiene un R2 ajustado muy alto, por lo tanto se consigue el objetivo de los modelos explicativos. Apliquemos selección de variables sobre este modelo en base al p-value. Utilizaremos el conjunto de entranamiento inicial para ver la evolución en la selección. SIn embargo, se puede notar que se alcanza un R2 mayor utilizado validación cruzada.
+Con este modelo se obtiene un R2 ajustado muy alto, por lo tanto se consigue el objetivo de los modelos explicativos. Apliquemos selección de variables sobre este modelo en base al p-value. Utilizaremos el conjunto de entreanamiento inicial para ver la evolución en la selección.
 
 ```{r}
 model = log(Deaths) ~ Incident_Rate*Confirmed + Recovered + Province_State + Cases_White*Cases_Black + 
@@ -300,7 +295,7 @@ linFit <- lm(model, data=train)
 ols_step_forward_p(linFit) # forward based on p-value
 
 ```
-La tabla anterior muestra que a partir de 4 variables el modelo predice bien. En este caso, nos quedaremos con este modelo porque se observa un ligero aumento en el R2 en la última iteración.
+La tabla anterior muestra que a partir de 4 variables ya se alcanza un buen rendimiento. En este caso, nos quedaremos con el modelo porque se observa un ligero aumento en el R2 en la última iteración.
 
 ```{r}
 plot(ols_step_forward_p(linFit))
@@ -313,13 +308,9 @@ linFit
 Para analizar los coeficientes debemos tener en cuenta que estamos prediciendo el log de la cantidad de muertes. Es evidente que la variable más importante es el estado al que pertenece la observación. #TODO
 
 
-```{r}
-test_results = data.frame(deaths = log(test$Deaths))
-```
-
 ### Modelo Predictivo
 
-Esta sección está dedicada a encontrar un modelo para predecir, donde no es tan importante la interpretabilidad de las decisiones. Se plantean varios modelos a utilizar. En este caso se implementan los siguientes modelos:
+Esta sección está dedicada a encontrar un buen modelo para predecir, donde no es tan importante la interpretabilidad de las decisiones. Se plantean varios modelos a utilizar. En este caso se implementan los siguientes modelos:
 
 * Regresión lineal
 * Regresión lineal robusta
@@ -328,7 +319,7 @@ Esta sección está dedicada a encontrar un modelo para predecir, donde no es ta
 * Elastic Net
 * PLS
 
-Los resultados de cada uno de los modelos serán comparados en función del RMSE y nos quedaremos con el que menor error alcanza. Los modelos de regresión lineal y regresión ribusta será probado con todas las variables y con una elección resultado de aplicar selección de variables stepwise. Por otra parte, el resto solo será entranado utilizando las variables seleccionadas por el tiempo que demora entrenar estos modelos con todas las variables. Además, para la evaluación será utilizado el método de cross-validation, en el caso de regresión lineal y robusta no es necesario porque no tienen hiperparámetros.
+Los resultados de cada uno de los modelos serán comparados en función del RMSE y nos quedaremos con el que menor error alcanza. Los modelos de regresión lineal y regresión robusta será probado con todas las variables y con un subconjunto, resultado de aplicar selección de variables stepwise. Por otra parte, el resto solo será entranado utilizando las variables seleccionadas por el tiempo que demora entrenar estos modelos con todas las variables. Además, para la evaluación será utilizado el método de cross-validation, en el caso de regresión lineal y robusta no es necesario porque no tienen hiperparámetros.
 
 Inicialmente se aplica selección de variables retomando nuestros modelos completo y naive. Recordar que aunque le hemos llamado modelo completo algunas variables se han eliminado como fue explicado con anterioridad.
 
@@ -355,21 +346,18 @@ wise.model <- log(Deaths) ~ Date + Province_State + Confirmed + Recovered +
 
 ```{r}
 
-lm.complete.t <- train(lm.complete,
-                data = train,
-                method = "lm",
-                trControl = ctrl,
-                preProcess=c('center', 'scale'))
+lm.completed <- lm(lm.complete, data=train)
 
-wise.model.t = train(wise.model,
-                data = train,
-                method = "lm",
-                trControl = ctrl,
-                preProcess=c('center', 'scale'))
+lm.wise <- lm(wise.model, data=train)
 
-test_results$lm.completed = predict(lm.complete.t, test)
-test_results$lm.wise = predict(wise.model.t, test)
+test_results = data.frame(deaths = log(test$Deaths))
+test_results$lm.completed = predict(lm.completed, test)
+test_results$lm.wise = predict(lm.wise, test)
+
+lm.completed.m <- postResample(pred = test_results$lm.completed, obs = test_results$deaths)
+lm.wise.m <- postResample(pred = test_results$lm.wise, obs = test_results$deaths)
 ```
+
 
 * Regresión robusta (con los modelos lm.complete y wise.model)
 
@@ -381,6 +369,9 @@ rlm.wise <- rlm(wise.model,data=train)
 
 test_results$rlm.complete = predict(rlm.complete, test)
 test_results$rlm.wise = predict(rlm.wise, test)
+
+rlm.complete.m <- postResample(pred = test_results$rlm.complete, obs = test_results$deaths)
+rlm.wise.m <- postResample(pred = test_results$rlm.wise, obs = test_results$deaths)
 ```
 
 * Ridge
@@ -397,8 +388,10 @@ ridge.wise <- train(wise.model,
 
 plot(ridge.wise)
 ridge.wise$bestTune
+
 test_results$ridge.wise <- predict(ridge.wise, test)
-postResample(pred = test_results$ridge.wise,  obs = test_results$deaths)
+
+ridge.wise.m <- postResample(pred = test_results$ridge.wise, obs = test_results$deaths)
 
 ```
 
@@ -415,8 +408,10 @@ lasso.wise <- train(wise.model, data = train,
 
 plot(lasso.wise)
 lasso.wise$bestTune
+
 test_results$lasso.wise <- predict(lasso.wise, test)
-postResample(pred = test_results$lasso.wise,  obs = test_results$deaths)
+
+lasso.wise.m <- postResample(pred = test_results$lasso.wise,  obs = test_results$deaths)
 
 ```
 * Elastic Net
@@ -433,8 +428,10 @@ glmnet.wise <- train(wise.model, data = train,
                      trControl=ctrl)
 plot(glmnet.wise)
 glmnet.wise$bestTune
+
 test_results$glmnet.wise <- predict(glmnet.wise, test)
-postResample(pred = test_results$glmnet.wise,  obs = test_results$deaths)
+
+glmnet.wise.m <- postResample(pred = test_results$glmnet.wise, obs = test_results$deaths)
 ```
 
 * PLS
@@ -447,136 +444,105 @@ pls.wise <- train(wise.model, data = train,
                   trControl=ctrl)
 
 plot(pls.wise)
+pls.wise$bestTune
+
 test_results$pls.wise <- predict(pls.wise, test)
-postResample(pred = test_results$pls.wise, obs = test_results$deaths)
+
+pls.wise.m <- postResample(pred = test_results$pls.wise, obs = test_results$deaths)
 ```
 
-Teniendo en cuenta el RMSE obtenido por cada uno de los modelos, podemos notar que Elastic Net obtiene el menor. Sin embargo, un modelo tan complejo y no presentar grandes diferencias en métricas con Lasso, se considera que este último es una mejor opción. Elastic Net realmente no se considera la mejor porque 
+Teniendo en cuenta el RMSE obtenido por cada uno de los modelos, podemos notar que los modelos lineales que utilizan todas las variables son los que menor error tienen. Sin embargo, al incluir todos los predictores están muy sobre-ajustados y tienen más probabilidades de fallar en datos nuevos (de cierta forma se ha comprobado al evaluar sobre test pero puede pasar que el test y el train en este conjunto de datos sean muy parecidos). Sin embargo, ninguna de los modelos presenta grandes diferencias respecto al resto por lo tanto. Notar que todos los modelos han superado al modelo *naive* que obtuvo un RMSE de 1.441291 y se había establecido como *benchmark*.
+
+```{r echo=FALSE}
+
+models <- t(as.matrix(data.table(
+  lm_complete = c(lm.completed.m),
+  lm_wise = c(lm.wise.m),
+  rlm_complete = c(rlm.complete.m),
+  rlm_wise = c(rlm.wise.m),
+  ridge_wise = c(ridge.wise.m),
+  lasso_wise = c(lasso.wise.m),
+  elasticnet_wise = c(glmnet.wise.m),
+  pls_wise = c(pls.wise.m)
+)))
+
+
+colnames(models) <- names(lm.completed.m)
+models
+
+```
+Analicemos la correlación de los modelos.
+
+```{r}
+library(GGally)
+test_results %>%
+  dplyr::select(-deaths) %>%
+  ggcorr(palette = "RdBu", label = TRUE) + labs(title = "Correlations between different models")
+```
+Los modelo tienen una correlación altísima y esto es a causa de los datos. Por lo tanto, en este problema no existe un modelo mejor a simple vista. Por esta razón, se decide combinar dos modelos, se toma el de regresión robusta sobre el conjunto de variables *wise* (que anteriormente habíamos dicho que no era buena idea escoger sólo ese) y lo combinamos con el modelo lasso, que presenta un rendimiento medio (en comparación con el resto) y puede balancear el sobre-ajuste del robusto. Además, lasso al basar se en PCA (Principal Component Analysis) podría aportar explicabilidad a analizar en trabajos futuros.  
+
+```{r}
+test_results$comb = (test_results$rlm.wise + test_results$lasso.wise)/2
+postResample(pred = test_results$comb,  obs = test_results$deaths)
+```
+La unión de estos modelos mejora el RMSE sobre el conjunto de test, sin embargo, como fue explicado con anterioridad tampoco se puede garantizar su buen comportamiento en el futuro pero en este punto, es una buena decisión.
 
 #### Cálculo de los intervalos de confianza
 
-```{r}
+Para el cálculo de los intervalos de confianza tomaremos como base el modelo de regresión lineal sobre el conjunto de variables *wise*  porque obtiene buenas métricas pero tampoco demasiado sobre-ajustado y tomaremos un intervalo de confianza al 95% puesto que el error es muy pequeño.
 
-linear <- lm(log(Deaths) ~ Incident_Rate*Confirmed, data = train)
-predictions <- exp(predict.lm(linear, newdata=test, interval="prediction", level=0.90))
-head(predictions)
+
+```{r}
+wise.model <- log(Deaths) ~ Date + Province_State + Confirmed + Recovered + 
+    Incident_Rate + Total_Test_Results + Case_Fatality_Ratio + 
+    Testing_Rate + Administered_Fed_LTC + Administered_Fed_LTC_Dose1 + 
+    Administered_Fed_LTC_Dose2 + Cases_White + Deaths_White + 
+    Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black
+
+
+lm.wise = lm(wise.model, data = train)
+
+predictions <-predict.lm(lm.wise, newdata=test, interval="prediction", level=0.95)
+
 predictions=as.data.frame(predictions)
-predictions$real = exp(test_results$deaths)
-
-```
-
-```{r}
-predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
-# how many real observations are out of the intervals?
-mean(predictions$out==1)
-# the real coverage is around 7% and the nominal one is 10%, hence it's ok, 
-# but the intervals should be a bit narrower
-```
-
-
-```{r}
-ggplot(predictions, aes(x=fit, y=real))+
-  geom_point(aes(color=out)) + theme(legend.position="none") +
-  xlim(20000, 1000000) + ylim(20000, 1000000)+
-  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
-  labs(title = "Prediction intervals", x = "Predicted Deaths", y="real Deaths")
-```
-
-
-
-```{r}
-linFit <- lm(log(price) ~ bedsperbath:type + log(sqft) + longitude, data=training)
-# obtain the prediction intervals directly:
-predictions <- exp(predict.lm(linFit, newdata=testing, interval="prediction", level=0.90))
+predictions$real = test_results$deaths
 head(predictions)
-predictions=as.data.frame(predictions)
-predictions$real = exp(test_results$price)
+```
+Veamos cuántas observaciones están fuera del intervalo de confianza. 
 
-predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
-# how many real observations are out of the intervals?
-mean(predictions$out==1)
-# the real coverage is around 7% and the nominal one is 10%, hence it's ok, 
-# but the intervals should be a bit narrower
+```{r}
+new.predictions <- predictions %>% 
+  mutate(out = factor(if_else(real<lwr | real > upr,1,0)))
 
-ggplot(predictions, aes(x=fit, y=real))+
+mean(new.predictions$out==1)
+```
+Solo el 2% de las observaciones de la muestra del conjunto de test están fuera del intervalo de confianza. A continuación se muestra de manera gráfica.
+
+```{r}
+new.predictions %>% 
+ggplot(aes(x=fit, y=real))+
   geom_point(aes(color=out)) + theme(legend.position="none") +
-  xlim(20000, 1000000) + ylim(20000, 1000000)+
-  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
-  labs(title = "Prediction intervals", x = "prediction",y="real price")
+  geom_ribbon(data=new.predictions, aes(ymin=lwr,ymax=upr), alpha=0.3) +
+  labs(title = "Prediction intervals", x = "prediction", y="real price")
+```
+## Predicciones finales
 
-# But what to do if we want to use a model with better prediction performance?
-# For instance, use the combination model
-# Then we cannot use the predict() function...
+Como se explicó anteriormente, el modelo seleccionado como modelo final para este problema es el modelo combinado. Este modelo es la combinación de un regresor lineal robusto construido sobre el conjunto de variables obtenidas al aplicar el método de *stepwise* y un modelo lasso, el cual también tiene como base la selección de variables. A continuación, se analizan las predicciones obtenidas por este modelo final. 
 
-# Final predictions:
-yhat = exp(test_results$comb)
-head(yhat) # show the prediction for 6 home prices
+La distribución de las predicciones es asimétrica, sin embargo el error es más simétrico, lo que implica que el modelo se equivoca similar para los valores por debajo y encima de la media.
+
+```{r}
+yhat = test_results$comb
 hist(yhat, col="lightblue")
-# take care: asymmetric distribution
 
-y = exp(test_results$price)
-error = y-yhat
+y = test_results$deaths
+error = y- yhat
 hist(error, col="lightblue")
-# But the error is more symmetric
-
-# But we cannot use the information in the testing set to obtain the confidence intervals in the testing set
-# Hence: split the testing set in two parts, one to measure the size of the noise, and the other one to compute the CIs from that size
-
-# Let's use the first 100 homes in testing to compute the noise size
-noise = error[1:100]
-sd.noise = sd(noise)
-
-# Let's use the rest of the homes to validate the coverage
-# If noise is a normal variable, then a 90%-CI can be computed as
-lwr = yhat[101:length(yhat)] - 1.65*sd.noise
-upr = yhat[101:length(yhat)] + 1.65*sd.noise
-
-# Non-parametric way:
-lwr = yhat[101:length(yhat)] + quantile(noise,0.05, na.rm=T)
-upr = yhat[101:length(yhat)] + quantile(noise,0.95, na.rm=T)
-
-# Non-parametric way, robust against outliers, but with no confidence level:
-lwr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=1.5)$stats[1]
-upr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=1.5)$stats[5]
-# This is a useful approach for anomaly detection
-# points outside the intervals are outliers
-# these are extreme outliers
-lwr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=3)$stats[1]
-upr = yhat[101:length(yhat)] + boxplot.stats(noise, coef=3)$stats[5]
-
-# Non-parametric way, even more robust against outliers
-lwr = yhat[101:length(yhat)] - 2.4*mad(noise) 
-upr = yhat[101:length(yhat)] + 2.4*mad(noise)
-# for normal data, sd=1.48*mad
-
-# For a symmetric distribution with zero mean, the mad is the 75th percentile of the distribution
-# That means, the following interval has confidence level 50% (if noise satisfies those assumptions):
-lwr = yhat[101:length(yhat)] - mad(noise) 
-upr = yhat[101:length(yhat)] + mad(noise)
-# it's called the probable error:  half of the values lies within the interval and half outside
-
-predictions = data.frame(real=y[101:length(y)], fit=yhat[101:length(yhat)], lwr=lwr, upr=upr)
-predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
-
-# how many real observations are out of the intervals?
-mean(predictions$out==1)
-# the real coverage of parametric approach is around 15% and the nominal one is 10%, hence it's ok, 
-# but the intervals should be a bit wider
-
-# the real coverage of non-parametric approach is around 15% and the nominal one is 10%, hence it's ok, 
-# but the intervals should be a bit wider
-
-# the real coverage of robust approach is around 8%. Here, no nominal value
-
-ggplot(predictions, aes(x=fit, y=real))+
-  geom_point(aes(color=out)) + theme(legend.position="none") +
-  xlim(20000, 1000000) + ylim(20000, 1000000)+
-  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
-  labs(title = "Prediction intervals", x = "prediction",y="real price")
-
-
 ```
 
+## Conclusiones
+
+En este trabajo se han desarrollado un conjunto de modelos predictivos, algunos enfocados en la explicabilidad de las decisiones y otros en la reducción del error en las predicciones. Se ha analizado un conjunto de datos con información de la situación provocada por la pandemia actual y se han incluido factores externos como información étnica. Los modelos tienen un error muy pequeño, pero esto no garantiza su desempeño en el futuro puesto que por la cantidad de variables que involucran tienen un gran riesgo de sobre-ajuste. En este trabajo solamente se han aplicado modelos de regresión, lo cual puede no ser lo más adecuado dada la naturaleza de los datos. En trabajos futuros sería interesante incluir análisis de series temporales que intuitivamente se adaptan mejor a escenarios temporales como es la información diaria de COVID.
 
 
 

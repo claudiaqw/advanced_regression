@@ -1,5 +1,5 @@
 ---
-title: "Estimación de la mortalidad de la COVID-19"
+title: "Modelos de regresión generalizados para la estimación de la cantidad de recuperados de la COVID-19"
 author: "Claudia Quintana Wong"
 date: "26/2/2021"
 output: html_document
@@ -26,75 +26,67 @@ library(dplyr)
 
 ## Introducción
 
-Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte. Las tasas de letalidad ayudan a entender la gravedad de la enfermedad, a identificar las poblaciones en riesgo y a evaluar la calidad de la atención sanitaria". Por esta razón, este trabajo se centra en la estimación del índice de mortalidad en los Estados Unidos a partir de los datos recogidos hasta el momento.
-
-Los modelos lineales generalizados son una extensión de los modelos de regresión lineal que se utilizan cuando la distribución de la variable dependiente no es normal.
-
+Según la OMS: "Una importante característica de las enfermedades infecciosas es la gravedad, que en última instancia se mide por su capacidad para causar la muerte". Por esta razón, este trabajo se centra en la estimación de la cantidad de personas recuperadas en un día en un estado determiando de los Estados Unidos a partir de los datos recogidos hasta el momento.
 
 ## Desarrollo
 
-En esta sección ...
+Los modelos lineales generalizados son una extensión de los modelos de regresión lineal que se utilizan cuando la distribución de la variable dependiente no es normal. En este trabajo se presentan un conjunto de modelos de regresión generalizados que intentan explicar y predecir la cantidad de enfermos de COVID recuperados. Se ofrece una breve descripción del conjunto de datos y las variables a tener en cuenta para la estimación y se comparan los modelos propuestos.
 
 ### Descripción del *dataset*
 
-Los datos fueron tomados de 
-
-https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_daily_reports_us.
+Los datos fueron tomados de https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_daily_reports_us. Este repositorio contiene información actualizada diariamente sobre el estado de los casos de COBID-19 en el mundo, haciendo especial énfasis en los datos de los Estados Unidos.
 
 Las variables originales son:
 
-* Province_State: El nombre del estado dentro de Estados Unidos
-* Country_Region: El nombre del país. En todos los casos toma valor US.
-* Last_Update: La fecha más reciente en que el fichero fue actualizado.
-* Lat
-* Long_
-* Confirmed: Cantidad de casos confirmados agregados para el estado
-* Deaths: Cantidad de muertes agregadas para el estado
-* Recovered: Cantidad de casos recuperados para el estado
-* Active: cantidad de casos ativos que no han sido resueltos (Active cases = total cases - total recovered - total deaths)
-* FIPS: Federal Information Processing Standards. código que identifica a los condados en US.
-* Incident_Rate: casos por 100 000 habitantes
-* Total_Test_Results: Cantidad total de personas que se han hecho tests
-* People_Hospitalized: Cantidad de personas hospitalizadas (se dejó de tomar el 31 Agosto)
-* Case_Fatality_Ratio: Cantidad de muertes * 100/Cantidad de Casos confirmados
-* UID: identificador de fila
-* ISO3: identificador oficial de país
-* Testing_Rate: Cantidad de tests por 100.000 habitantes.  Total test results = Total test results(Positive + Negative)
-* Hospitalization_Rate: Cantidad de Hospitalizados / cantidad de casos. 
+* **Province_State**: El nombre del estado dentro de Estados Unidos
+* **Country_Region**: El nombre del país. En todos los casos toma valor US.
+* **Last_Update**: La fecha más reciente en que el fichero fue actualizado.
+* **Lat**: longitud
+* **Long_**: latitud
+* **Confirmed**: Cantidad de casos confirmados agregados para el estado
+* **Deaths**: Cantidad de muertes agregadas para el estado
+* **Recovered**: Cantidad de casos recuperados para el estado
+* **Active**: cantidad de casos ativos que no han sido resueltos (Active cases = total cases - total recovered - total deaths)
+* **FIPS**: Federal Information Processing Standards. código que identifica a los condados en US.
+* **Incident_Rate**: casos por 100 000 habitantes
+* **Total_Test_Results**: Cantidad total de personas que se han hecho tests
+* **People_Hospitalized**: Cantidad de personas hospitalizadas (se dejó de tomar el 31 Agosto)
+* **Case_Fatality_Ratio**: Cantidad de muertes * 100/Cantidad de Casos confirmados
+* **UID**: identificador de fila
+* **ISO3**: identificador oficial de país
+* **Testing_Rate**: Cantidad de tests por 100.000 habitantes.  Total test results = Total test results(Positive + Negative)
+* **Hospitalization_Rate**: Cantidad de Hospitalizados / cantidad de casos. 
 
+Para conformar el dataset tal como lo usaremos fue preciso realizar un preprocesamiento. La fuente de datos no era un archivo en formato de tabla inicialmente, sino que consistía en un directorio donde había archivos .csv individuales con los datos de cada día. Fue necesario leer todos los archivos y mezclar toda la información. Además, esto supuso un trabajo de limpieza de los datos puesto que todos los archivos no tenían las mismas columnas. Luego de unir toda la información se exportó a un archivo csv donde se almacena el histórico de todos los datos relacionados con los casos en los Estados Unidos.
 
 ### Carga y transformación
 
+Primeramente se cargan los datos y se transforman las variables que expresan una fecha.
+
 ```{r}
 data <- read.csv(file = 'data/covid_data_us.csv')
-```
-
-Transformamos los campos de tipo date
-
-```{r}
 data$Last_Update <- as.Date(data$Last_Update)
 data$Date <- as.Date(data$Date)
-
 summary(data)
 ```
-Analicemos la distribución de valores desconocidos en las variables:
+Analicemos la distribución de valores desconocidos según las variables.
 
 ```{r}
 barplot(colMeans(is.na(data)), las=2)
 ```
-En el dataset existen muchas filas que tienen valores Nan en alguna de las variables. En el caso de las variables **People_Hospitalized** y **Hospitalization_Rate**, cerca de un 70% de los datos son descinocidos. Por esta razón no podemos eliminarlas. Por lo tanto, se recurre a la imputación de valores. Para la imputacióm se toma la media de los valores que ha tomado esa variable en ese mes y año en ese estado específico. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
+
+En el dataset no existen muchas filas que tienen valores Nan en alguna de las variables. La mayoría de los *missing values* se concentran en las variables **People_Hospitalized** y **Hospitalization_Rate**, cerca de un 70% de los datos son desconocidos. Sin embargo, aunque elimándolos se reduce el tamaño del conjunto de datos, aún tiene un tamaño aceptable para un análisis de regresión. Mediante la aplicación de este método se reduce el ruido introducido por los métodos tradicionales de imputar con zeros o con algunos de los estadísticos de forma.
 
 ```{r}
 data <- na.omit(data)
 ```
 
-Tras aplicar el reemplazo de los valores desconocidos, se puede observar que el conjunto de datos queda libre de *missing values*.
+Tras aplicar la eliminación de las filas que contienen valores desconocidos, se puede observar que el conjunto de datos queda libre de *missing values*.
 
 ```{r}
 colSums(is.na(data))
 ```
 En el conjunto de datos hay muchas variales que no aportan información a un modelo de regresión. Por lo tanto, se seleccionan un conjunto de las que se consideran que pudiera ser parte de algunos de los modelos a desarrollar. Además, se toman datos a partir del 1ro de julio de 2020 puesto que los datos son más fiables.
-
 
 ```{r}
 covid.data <- data %>% 
@@ -103,33 +95,45 @@ covid.data <- data %>%
          Testing_Rate, Hospitalization_Rate, Date) %>% 
   dplyr::filter(Date >= "2020-07-01") %>% 
   dplyr::arrange(Date)
-  
 ```
 
 ### Análisis descriptivo
 
-```{r}
-ggplot(covid.data, aes(Deaths)) + geom_density(fill="lightblue") + 
-  xlab("Deaths") + ggtitle("Deaths distribution")
-```
+Comenzaremos con un análisis de la distribución de la variable objetivo.
 
 ```{r}
+ggplot(covid.data, aes(Recovered)) + geom_density(fill="lightblue") + 
+  xlab("Recovered") + ggtitle("Deaths distribution")
+```
+
+En la gráfica anterior se puede observar que la mayor cantidad de recuperados está en el rango de 0 a 15.000 diariamente.
+La función de distribución de la variable objetivo sugiere que la mejor manera de predecir ese comportamiento es mediante una función exponencial. Apliquemos la función logaritmo.
+
+```{r}
+ggplot(covid.data, aes(x= log(Recovered))) + geom_density(fill="lightblue") + 
+  xlab("Recovered") + ggtitle("Deaths distribution")
+```
+
+La función de densidad sobre el logaritmo de la variable dependiente sugiere que, aunque no tiene un patrón lineal, una línea puede ajustarse mejor a esta distribución que a la densidad de la variable dependiente en bruto. Aunque tambiés en posible afirmar que un modelo lineal no es el mejor para simular el comportamiento de esta variable.
+
+```{r warning=FALSE}
 plot_num(covid.data)
 ```
+
+Analizamos la existencia de valores atípicos. En la siguiente imagen se observa que en la mayor parte de las variables que ofrecen información diaria del COVID aparecen valores más allá de los bigotes de las cajas. Este comportamiento es esperados dado los picos de contagios característicos de la pandemia, por esta razón no serán eliminados. 
 
 ```{r}
 numeric_cols = sapply(covid.data, is.numeric)
 boxplot(scale(covid.data[, numeric_cols]), las=2, col='darkblue')
 ```
-Se calcula la matriz de correlación para verificar dicha relación. Los datos no muestran tal relación.
-Se puede notar que los pares de variables *(Incident_Rate, Active)*, *(Incident_Rate, Active)*
-*(Deaths, Confirmed)*, *(Recovered, Confirmed)*, *(Total_Test_Results, Deaths)*, *(Total_Test_Results, Confirmed)* tienen una alta correlación.
+
+Se calcula la matriz de correlación para comprobar la existencia de correlación lineal entre algunas de las variables. Se puede notar que los pares de variables *(Active, Total_Test_Result)*, *(Active, People_Hospitalized)*, *(Total_Test_Result, People_Hospitalized)*, *(Deaths, Confirmed)*, *(Recovered, Confirmed)*, entre otros, tienen una alta correlación.
 
 ```{r}
-library(corrplot)
 ggcorr(covid.data[,numeric_cols], label = T)
 ```
 
+Intuitivamente, aunque no se refleja en la matriz de correlación lineal, la cantidad de recuperados está relacionada con el índice de mortalidad y la cantidad de fallecidos diarios. En la siguiente gráfica se muestra la evolución del índice de mortalidad en los diferentes estados. Si bien no se distingue qué curva pertence a cada región, lo importante de este gráfico es visualizar que existe un ligero decrecimiento de este índice, lo que indica que debe existir un crecimiento en la cantidad de Recuperados.
 
 ```{r}
 covid.data %>% 
@@ -139,43 +143,11 @@ covid.data %>%
   
 ```
 
-```{r}
-covid.data %>% 
-  ggplot(aes(x=Confirmed, y=Deaths, group=Province_State, color = Province_State)) + 
-  geom_boxplot(fill="lightblue") +
-  labs(title = "Deaths by Confirmed", x = "", y = "", col = "")
-```
-
-```{r}
-
-pal <- colorNumeric(
-  palette = "Blues",
-  domain = covid.data$Case_Fatality_Ratio)
-
-
-leaflet(data = covid.data) %>% 
-  setView(lng = mean(covid.data$Long_), lat = mean(covid.data$Lat), zoom = 5) %>%
-  addTiles(urlTemplate = 'http://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png') %>%
-  stroke = FALSE, smoothFactor = 0.2, fillOpacity = 1
-
-
-leaflet(data = covid.data) %>% 
-  setView(lng = mean(covid.data$Long_), lat = mean(covid.data$Lat), zoom = 5) %>%
-  addTiles(urlTemplate = 'http://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png') %>%
-  addCircles(~Long_, ~Lat, 
-             popup = ~paste0('<b>Cluster:</b> ', as.character(Province_State)), 
-             radius = 500,
-             color = ~pal(covid.data$Case_Fatality_Ratio),
-             opacity = 0.2,
-             weight = 0.5)
-  
-```
 ### Modelo de regresión
 
-La tasa de mortalidad se puede calcular a partir de la cantidad de casos diagnosticados y la proporción qué representan los fallecidos. Al observar el gráfico se puede notar que el índice de mortalidad tiene una alta correlación con la cantidad de muertes. por esta razoón el problema se transforma en estimar el índice de letalidad suponiendo que conocemos la cantidad de casos y demás variables, pero no la cantidad de muertes.
+La cantidad de recuperados se puede obtener a largo plazo sobre la cantidad de casos activos y la cantidad de fallecidos. Sin embargo, la cantidad de fallecidos en un día no incide directamente sobre la cantidad de recuperados porque generalmente al tiempo que una persona fallece no se habría recuperado ya. Este hecho se detectaría mejor con el análisis de series temporales, pero no es el objetivo de este trabajo.
 
-Dividemos el cojunto de datos en *training* y *test*.
-
+Para comenzar continuar con el desarrollo de los modelos se divide el conjunto de datos original en *training* y *test* para comprobar las predicciones en nuevos datos.
 
 ```{r}
 set.seed(42)
@@ -187,291 +159,267 @@ training <- covid.data[ trainIndex,]
 testing <- covid.data[-trainIndex,]
 ```
 
-Inicialmente, se presenta un modelo de regresión lineal en función de todas las variables del *dataset*.
 
+En esta sección se aplical modelos de regresión lineal clásicos para comparar las diferencias en interpretabilidad respecto a modelos lineales generalizados más complejos.
 
 ### Regresión lineal
 
-En esta sección se aplical modelos de regresión lineal clásicos para comparar las diferencias en interpretabilidad respecto a modelos lineales generalizados más complejos.
+Inicialmente, se presenta modelo de regresión lineal con el objetivo de entender la influencia de los predictores sobre la variable objetivo y utilizar dicho conocimiento para desarrollar modelos más complejos y creativos. El primer modelo que se presenta es el modelo en el que la variable objetivo se expresa en función de todas las variables del *dataset*.
 
 * Modelo lineal simple
 
 ```{r}
 
-fit.lm <- lm(Recovered ~ . -Deaths - Lat - Long_ - Case_Fatality_Ratio, data=training) 
+fit.lm <- lm(Recovered ~ . - Lat - Long_, data=training) 
 summary(fit.lm)
 
-# Diagnosis
 par(mfrow=c(2,2))
 plot(fit.lm)
 
 ```
-A pesar de la simplicidad del modelo lineal, se logra alcanzar un R_{2} considerable. Se puede notar que existen varias variables cuyos coeficientes tienen un peso positivo en el índice de mortalidad.
 
-#TODO: Determinar de los estados cual es la variable base
+A pesar de la simplicidad del modelo lineal, se logra alcanzar un R2 muy alto pero esto solo quiere decir que el modelo esta muy sobre-ajustado y que sería bueno para predecir en el contexto de la regresión lineal. Aunque no se pueda tomar solo este modelo para interpretar los resultados si podemos analizar la influencia indudable de algunas variables. 
 
-Al analizar los coeficientes de las variables continuas, se puede llegar a la conclusión que la variable que mayor impacto positivo tiene es **Hospitalization_Rate**. Esto significa que para cada unidad de la variable objetivo se incrementa en  índice de hospitalización en un 0.2. Asimismo, la variable parece tener un efecto negtaivo en la variable dependiente.
+Se puede notar que existen varias variables cuyos coeficientes tienen un peso positivo. Al analizar los coeficientes de las variables continuas, se puede llegar a la conclusión que la variable que mayor impacto positivo tiene es **Confirmed**. Esto significa que para cada unidad que la variable objetivo incrementa el número de casos confirmados aumenta en 1.02, lo cual tiene mucho sentido. Asimismo se observa una relación negativa con la cantidad de personas que fallecen. También se puede notar que el estado al que pertence la observación, tiene una gran influencia.
 
 
 * Modelo lineal con logaritmo
  
 ```{r}
-fit.lm.log <- lm(log(Recovered) ~ . - Deaths -Lat -Long_ -Case_Fatality_Ratio, data=training) 
+fit.lm.log <- lm(log(Recovered) ~ .-Lat -Long_, data=training) 
 summary(fit.lm.log)
 
 par(mfrow=c(2,2))
 plot(fit.lm.log)
 
 ```
-Al aplicar la función logaritmo sobre la variable dependendiente disminuye el R_{2}.
+
+Al aplicar la función logaritmo sobre la variable el R2 se mantiene alto, sigue estando sobre-ajustado el modelo.
+A continuación, se presentan los modelos de regresión generalizados.
 
 * Primer modelo GLM: todas las variables
 
-En este caso para estimar la tasa de mortalidad se pone la cantidad de muertes como variable dependiente del modelo y luego se aplica una transformación para convertirlo en tasa. Esto se hace para aprovechar la utilidad de la familia de Poisson en la estimación de variables contadoras.  
+En este caso para estimar la cantidad de recuperados se pone la variable **Recovered** como variable dependiente del modelo. Al tratarse de una variable contadora se fija como familia la Poisson.  
 
 ```{r}
 fit.glm.poisson.all <- glm(Recovered ~ . - Lat - Long_, 
                        family = 'poisson', data=training)
 summary(fit.glm.poisson.all)
 ```
-```{r}
-fit.glm.poisson.all <- glm(Deaths ~ . - Case_Fatality_Ratio - Lat - Long_, 
-                       family = 'poisson', data=training, offset = log(Confirmed))
-summary(fit.glm.poisson.all)
+Aunque un modelo de regresión lineal y un modelo generalizado no se pueden comparar directamente en función de las métricas alcanzadas, se puede afirmar que este modelo ha mejorado teniendo en cuenta la diferencia entre la Null y la Residual deviance.
+
+Analicemos la influencia de los coeficientes,
+
+```{r warning=FALSE}
+exp(cbind(coef(fit.glm.poisson.all), confint(fit.glm.poisson.all)))
 
 ```
-* Modelo LGLM: Selección de variables
+Al analizar los coeficientes, se puede notar la importancia de incluir la variable **Province_State** en el modelo final. El estado base para construir las variables *dummies* relativas fue Alabama. Si nos fijamos en los coeficientes, esto quiere decir que en el estado de Massachusetts hay aproximadamente tres veces más recuperados que en Alabama o por ejemplo, en New Jersey, un 20% más de recuperados. Teniendo en cuenta, los coeficiesnte se selecciona un conjunto de variables para crear un nuevo modelo con menor cantidad de variables.
+
+* Modelo GLM: Selección de variables
+
+En este modelo se incluyen interacciones entre las variables. Se propone añadir uun cruce entre las variables Hospitalization_Rate y Confirmed puesto que muchos de los casos confirmados que son hospitalizados pueden resultar en fallecimientos, lo cual influye en la cantidad de recuperados. Asimismo, intuitivamente, se adiciona el cruce entre **Case_Fatality_Ratio** y **Active**. Adicionalmente incluimos la interacción Deaths:Active.
 
 ```{r}
-glm.select <- glm(Recovered ~ Confirmed + Active + Deaths + Hospitalization_Rate, 
+glm.select <- glm(Recovered ~ Hospitalization_Rate*Confirmed + Case_Fatality_Ratio*Active + Deaths:Active + Province_State, 
                        family = 'poisson', data=training)
+
 summary(glm.select)
 
 ```
-```{r}
-#glm.select <- glm(Deaths ~ Confirmed + Active + Recovered + Hospitalization_Rate, 
-                       family = 'poisson', data=training, offset = log(Confirmed))
-#summary(glm.select)
+Todas las variables tienen un p-valor muy pequeño por lo tanto influyen en la estimación de la variable objetivo. Aunque este modelo no obtiene mejor AIC que el modelo completo, sí reduce la deviance. Veamos cuánto influyen numéricamente en la variable objetivo. Invetimos el link, como el link es el logaritmo tomamos la exponencial.
 
-```
-Todas las variables tienen un p-valor muy pequeño por lo tanto influyen en la estimación de la variable objetivo. Sin embargo, se observa que la variable *Total_Test_Results* tiene un coeficiente positivo aunque muy pequeño, pero en compración con el resto, parece que es la que mayor incidencia tiene sobre el índice de mortalidad. Veamos cuánto influyen numéricamente en la variable objetivo. Invetimos el link, como el link es el logaritmo tomamos la exponencial. Aunque el modelo es sencillo, se puede notar que presenta ventaja sobrel el naive al reducir 
-
-```{r}
+```{r warning=FALSE}
 exp(cbind(coef(glm.select), confint(glm.select)))
 ```
-Todos los coeficientes son muy similares y cercanos a 1. Vamos a incluir en el modelo el estado donde fueron registrados los casos. Cuando crece un número de hsopitalizados crece en la misma medida la tasa de mortalidad.
+Todos los coeficientes producto de las interacciones añadidas son muy similares y cercanos a 1.
 
 ```{r}
-# All effects on target:
 plot(allEffects(glm.select), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
 ```
-* GLM: Incluyendo el estado
+
+A continuación se muestran las variables **Active** y **Deaths** en función del valor predicho que corresponde al logaritmo de la cantidad de Recuperados.
 
 ```{r}
-glm.select.state <- glm(Recovered ~ Confirmed + Active + Recovered + Deaths + Hospitalization_Rate + Province_State, 
-                       family = 'poisson', data=training)
-summary(glm.select.state)
+plot(effect("Active", glm.select), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="active", ylab="log(Recovered)", rug=FALSE, main="")
+```
+
+En este gráfico podemos notar que si aplicamos la función exponencial sobre los valores del eje Y, la monotonía de la función cambia lo que impleca que a medida que crece la cantidad de casos Activos también crecen los recuperados.
+
+```{r}
+plot(effect("Confirmed", glm.select), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="Confirmed", ylab="Recovered", rug=FALSE, main="")
 
 ```
 
-```{r}
-#glm.select.state <- glm(Deaths ~ Confirmed + Active + Recovered + Hospitalization_Rate + Province_State, 
- #                      family = 'poisson', data=training, offset = log(Confirmed))
-#summary(glm.select.state)
-
-```
-Al analizar los betas se puede ver qué el estado influye en gran medida en el índice de mortalidad. Analicemos los coeficientes reales del modelo.
-
-```{r}
-exp(cbind(coef(glm.select.state), confint(glm.select.state)))
-```
-#TODO: explicar detenidamente la incidencia sobre los estados.
-
-
-```{r}
-plot(effect("Active", glm.select.state), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="active", ylab="deaths", rug=FALSE, main="")
-# a very clear relation
-```
-
-```{r}
-plot(effect("Recovered", glm.select.state), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="Recovered", ylab="deaths", rug=FALSE, main="")
-# a very clear relation
-```
-
-```{r}
-# All effects on target:
-plot(allEffects(glm.select.state), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
-```
-* Modelo GLM con interacciones
-
-```{r}
-
-```
+Así mismo ocurre con los casos confirmados al aplicar la transformación de la variable objetivo.
 
 
 * Modelo GLM QuasiPoisson
 
-El modelo de Poisson asume que la varianza y la #TODO de son iguales. Sin embargo, en la práctica generalemnte existe diferencia. A este se le conoce como sobredispersión donde la varianza del índice de mortalidad es mayor que el que dice el modelo de poisson. Para modela esto se puede utilizar el modelo quassi-poisson o la binomial negativa.
+El modelo de Poisson asume que la varianza y la media de los datos son iguales. Sin embargo, en la práctica generalemnte existe diferencia. A esto se le conoce como sobredispersión e implicaría en este caso que la varianza de la cantidad de recuperados es mayor que lo que asume el modelo de Poisson. Para modelar esto se puede utilizar el modelo quassi-poisson o la binomial negativa.
 
 ```{r}
-glm.select.state.qp <- glm(Deaths ~ Active + Total_Test_Results + Recovered + People_Hospitalized + Province_State, 
-                       family = 'quasipoisson', data=training, offset = log(Confirmed))
-summary(glm.select.state.qp)
+glm.select.qp <- glm(Recovered ~ Hospitalization_Rate*Confirmed + 
+                       Case_Fatality_Ratio*Active + Deaths:Active + Province_State, 
+                       family = 'quasipoisson', data=training)
+summary(glm.select.qp)
 
 ```
-Según el modelo, el parámetro de dispersión es grande (>1) por lo que existe una alta sobre-dispersión. Por lo tanto, es mejor utilizar el modelo quasi-poisson.
+Según el modelo, el parámetro de dispersión es grande (>1) por lo que existe una alta sobre-dispersión en los datos. Por lo tanto, es mejor utilizar el modelo quasi-poisson que tiene en cuenta esta realidad. Además, se puede notar una diferencia mayor en cuanto a la deviance.
 
 ```{r}
-exp(cbind(coef(glm.select.state.qp), confint(glm.select.state.qp)))
+exp(cbind(coef(glm.select.qp), confint(glm.select.qp)))
 ```
-Aunque los coeficientes son bastante parecidos.
-Por tanto, sobre este conjunto de datos debemos utilizar la quasi-poisson porque la poisson no se ajusta a la realidad de los datos.
+Los coeficientes son bastante parecidos a los del modelo de poisson, sin embargo, obtenemos coeficientes más limpios y fáciles de interpretar. Aunque no se puede medir exactamente la mejora de este modelo sobre el quasi-poisson, se recomienda utilzar este porque ha sido modelado teniendo en cuenta la sobre-dispersión de los datos, mientras que el de poissson ajusta los coeficientes asumiendo algo que no se cumple. 
 
+```{r}
+plot(allEffects(glm.select.qp), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
+```
+
+```{r}
+plot(effect("Active", glm.select.qp), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="active", ylab="log(Recovered)", rug=FALSE, main="")
+```
+```{r}
+plot(effect("Confirmed", glm.select.qp), ci.style="band", rescale.axis=FALSE, multiline=TRUE, xlab="active", ylab="log(Recovered)", rug=FALSE, main="")
+```
+La relación existente entre las variables es clara y permanece al utilizar el modelo de quasi-poisson.
 Intentemos con la binomial negativa.
 
 * Modelo Binomial negativa
 
 ```{r}
-glm.select.state.nb <- glm.nb(Recovered ~ Active + Total_Test_Results + Deaths + People_Hospitalized + Province_State, 
+glm.select.nb <- glm.nb(Recovered ~ Hospitalization_Rate*Confirmed + 
+                       Case_Fatality_Ratio*Active + Deaths:Active + Province_State, 
                        data=training)
-summary(glm.select.state.nb)
+summary(glm.select.nb)
 
 ```
 ```{r}
-exp(cbind(coef(glm.select.state.nb), confint(glm.select.state.nb)))
+plot(allEffects(glm.select.nb), rescale.axis=FALSE, multiline=TRUE, rug=FALSE, main="")
 ```
+La relación entre las variables se mantiene sin observarse diferencias notables respecto al modelo de quasi-poisson.
+
 ## Predicción
 
-Se realizan las redicciones con el modelo presentado anteriormente
+En esta sección evaluaremos los dos modelos anteriores, **glm.select.qp** y **glm.select.nb**, que tienen en cuenta el factor de sobre-dispersión. Como teniendo en cuenta el análisis anterior no hay un ganador por excelencia, evaluaremos ambos modelos sobre las predicciones y seleccionamos el de menor error.
+
+Para hacer las predicciones, debemos tener en cuenta que los modelos lineales predicen el valor esperado de una variable, en este caso, la cantidad de confirmados, mientras que los modelos de poisson predicen la tasa, en este caso aplicando como función link el logaritmo,
+
+* Predicción del modelo de quasi-poisson* **glm.select.qp**
 
 ```{r}
-predictions = round(predict(glm.select.state.nb, newdata=testing, type = "response"), 0)
+plot(training$Recovered, predict(glm.select.qp, type = "response"),
+     xlab="actual",ylab="predicted")
+abline(a=0,b=1)
+```
+
+```{r}
+cor(training$Confirmed,predict(glm.select.qp, type = "response"))^2
+```
+```{r}
+predictions = round(predict(glm.select.qp, newdata=testing, type = "response"), digits=0)
 head(predictions,20)
 ```
-* Predicción de Intervalos
+Intervalos de confianza
 
 ```{r}
-preds = predict(fit.poisson, newdata=testing, type = "link", se.fit=T)
+preds = predict(glm.select.qp, newdata=testing, type = "link", se.fit=T)
 critval <- 1.96 ## approx 95% CI
 upr <- preds$fit + (critval * preds$se.fit)
 lwr <- preds$fit - (critval * preds$se.fit)
-fit <- preds$fit
-fit[1:10] # these predictions are in log-scale
+fit <- preds$fit # these predictions are in log-scale
 
-```
+fit2 <- glm.select.qp$family$linkinv(fit)
+upr2 <- glm.select.qp$family$linkinv(upr)
+lwr2 <- glm.select.qp$family$linkinv(lwr)
 
-
-
-```{r}
-# Then, untransform the link to predict the mean (probability in this case): muhat = inv(g)*(linear predictor)
-fit2 <- fit.poisson$family$linkinv(fit)
-upr2 <- fit.poisson$family$linkinv(upr)
-lwr2 <- fit.poisson$family$linkinv(lwr)
-fit2[1:10] # now the predictions are in counts (but with decimal points)
-```
-```{r}
 data.frame(lower=lwr2, prediction=round(fit2,digits=0), upper=upr2)[1:10,]
+
 ```
 
+Evaluando el poder predictivo del modelo:
 
 ```{r}
 # But how can we guess the predictive power of the models?
-train <- sample(1:nrow(wine_training), round(nrow(wine_training)*0.80,0))
+train <- sample(1:nrow(training), round(nrow(training)*0.80,0))
 covid.train <- training[train,]
 covid.test <- training[-train,]
+
+fit.qpoisson <- glm(Recovered ~ Hospitalization_Rate * Confirmed + 
+    Case_Fatality_Ratio * Active + Deaths:Active + Province_State, family = "poisson", data = covid.train)
+
+pred = predict(fit.qpoisson, newdata=covid.test, type = "response")
+
+rmse = sqrt(mean((pred - covid.test$Recovered)^2))
+rmse
+
+sd(covid.test$Recovered)
+
+cor(pred, covid.test$Recovered)^2
+```
+
+* Predicción del modelo binomial negativa 
+
+```{r}
+
+plot(training$Recovered, predict(glm.select.nb, type = "response"),
+     xlab="actual",ylab="predicted")
+abline(a=0,b=1)
+
 ```
 
 ```{r}
-fit.poisson <- glm(TARGET ~ VolatileAcidity + Chlorides + TotalSulfurDioxide +  
-                     FreeSulfurDioxide + AcidIndex + LabelAppeal*STARS, family = "poisson", data = wine.train)
-pred = predict(fit.poisson, newdata=wine.test, type = "response")
-# conditional error:
-rmse = sqrt(mean((pred-wine.test$TARGET)^2))
-rmse
-# unconditional error:
-sd(wine.test$TARGET)
-# GLM is able to reduce 25% the original noise
-# R2 in testing set:
-cor(pred,wine.test$TARGET)^2
+cor(training$Confirmed,predict(glm.select.nb, type = "response"))^2
 ```
 
-
-
-
-# Testing wines
-predict(fit.zip3, newdata=wine_testing, type = "response")
-# we should round the numbers:
-predictions = round(predict(fit.zip3, newdata=wine_testing, type = "response"), digits=0)
+```{r}
+predictions = round(predict(glm.select.nb, newdata=testing, type = "response"), digits=0)
 head(predictions,20)
+```
+Intervalos de confianza
 
-# Prediction intervals
-
-# Take care: precict.zeroinfl does not have implemented computation of intervals
-# You can estimate the intervals using bootstrap, but more complicated
-
-# So, let's do with a standard GLM
-
-# First, predict the link (linear predictor)
-preds = predict(fit.poisson, newdata=wine_testing, type = "link", se.fit=T)
+```{r}
+preds = predict(glm.select.nb, newdata=testing, type = "link", se.fit=T)
 critval <- 1.96 ## approx 95% CI
 upr <- preds$fit + (critval * preds$se.fit)
 lwr <- preds$fit - (critval * preds$se.fit)
-fit <- preds$fit
-fit[1:10] # these predictions are in log-scale
+fit <- preds$fit # these predictions are in log-scale
 
-# Then, untransform the link to predict the mean (probability in this case): muhat = inv(g)*(linear predictor)
-fit2 <- fit.poisson$family$linkinv(fit)
-upr2 <- fit.poisson$family$linkinv(upr)
-lwr2 <- fit.poisson$family$linkinv(lwr)
-fit2[1:10] # now the predictions are in counts (but with decimal points)
+fit2 <- glm.select.nb$family$linkinv(fit)
+upr2 <- glm.select.nb$family$linkinv(upr)
+lwr2 <- glm.select.nb$family$linkinv(lwr)
 
 data.frame(lower=lwr2, prediction=round(fit2,digits=0), upper=upr2)[1:10,]
 
+```
 
-# But how can we guess the predictive power of the models?
-train <- sample(1:nrow(wine_training), round(nrow(wine_training)*0.80,0))
-wine.train <- wine_training[train,]
-wine.test <- wine_training[-train,]
+Evaluando el poder predictivo del modelo:
 
-# GLM Poisson
-fit.poisson <- glm(TARGET ~ VolatileAcidity + Chlorides + TotalSulfurDioxide +  
-                     FreeSulfurDioxide + AcidIndex + LabelAppeal*STARS, family = "poisson", data = wine.train)
-pred = predict(fit.poisson, newdata=wine.test, type = "response")
-# conditional error:
-rmse = sqrt(mean((pred-wine.test$TARGET)^2))
+```{r}
+fit.nb <- glm.nb(Recovered ~ Hospitalization_Rate * Confirmed + 
+    Case_Fatality_Ratio * Active + Deaths:Active + Province_State, data = covid.train)
+
+pred = predict(fit.nb, newdata=covid.test, type = "response")
+
+rmse = sqrt(mean((pred - covid.test$Recovered)^2))
 rmse
-# unconditional error:
-sd(wine.test$TARGET)
-# GLM is able to reduce 25% the original noise
-# R2 in testing set:
-cor(pred,wine.test$TARGET)^2
 
-# ZIP Poisson
-fit.zip <- zeroinfl(TARGET ~ . + LabelAppeal:STARS| . , dist = "poisson", data = wine.train)
-pred = predict(fit.zip, newdata=wine.test, type = "response")
-# conditional error:
-rmse = sqrt(mean((pred-wine.test$TARGET)^2))
-rmse
-# unconditional error:
-sd(wine.test$TARGET)
-# GLM is able to reduce 25% the original noise
-# R2 in testing set:
-cor(pred,wine.test$TARGET)^2
-# a bit better
+sd(covid.test$Recovered)
 
+cor(pred, covid.test$Recovered)^2
 
+```
+Al analizar los gráficos de plot se puede observar que en ambos casos los valores predichos están muy cercanos a los valores reales. La distancia de los puntos a la línea X = Y es pequeña, aunque en el caso del modelo binomial negativo se observa más dispersión. Esta dispersión sugiere que el modelo quasi-poisson predice con menor error. 
 
-
-
-
-#TODO: predictions
+Al calcular los intervalos de confianza se puede notar que el intervalo tiene un rango de 2000 lo que implica que el modelo puede equivocarse en 1000 casos a la derecha o a la izquierda y aún así estar dentro del intervalo de confianza. En este caso en particular tiene sentido dada la variabilidad de la cantidad de casos recuperados, más aún si se tiene en cuenta la relación con la cantidad de casos confirmados diariamente en Estados Unidos, que presenta cifras mayores que el resto de los países. Esta misma idea se aplica al cálculo del RMSE, donde obtenemos valores grandes en ambos casos pero si se tiene en cuenta la desviación estándar de los datos no es muy alto, implicando que ambos modelos predicen bien, esto se confirma al tener en cuenta el R2. Por lo tanto y teniendo en cuenta que el modelo basado en la binomial negativa alcanza un RMSE mayor nos quedamos con el modelo quasi-poisson al tener un error de predicción más pequeño.
 
 
 ## Conclusiones
 
-El análisis no es preciso porque no tiene en cuenta la temporalidad de los datos.
+En este trabajo se ha realizado una estimación de la cantidad de casos recuperados diarios. Se ha llegado a la conclusión que esta variable está influenciada por la cantidad de casos confirmados y activos. Se han desarrollado un conjunto de modelos lineales y generalizados. Sin embargo, se pudo apreciar que este tipo de modelos no son los más adecuados para este tipo de problemas, aún cuando logran predecir bien si tienen enn cuenta muchas variables. El análisis no es preciso porque no tiene en cuenta la temporalidad de los datos y las diferencias entre los diferentes estados. Por lo tanto, se recomienda para trabajo futuros incorporar sensibilidad temporal y hacer un análisis más exhaustivo teniendo en cuenta las diferencias de un estado a otro.
 
 
 ## Bibliografía
 
 * https://apps.who.int/iris/bitstream/handle/10665/333857/WHO-2019-nCoV-Sci_Brief-Mortality-2020.1-spa.pdf
+* https://stats.idre.ucla.edu/r/dae/negative-binomial-regression/
