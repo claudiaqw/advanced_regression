@@ -1,5 +1,5 @@
 ---
-title: "covid_advanced_regression"
+title: "Regresión Avanzad para la estimación de fallecidos de COVID-19"
 author: "Claudia Quintana Wong"
 date: "26/2/2021"
 output: html_document
@@ -9,22 +9,481 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Introducción
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+El objetivo de este trabajo es concebir y diseñar dos modelos, uno explicativo y otro predictivo, que nos permitan predecir la cantidad de muertes de COVID-19 en Estados Unidos en función de un conjunto de variables. Consiste en un problema de regresión pues la variable a predecir toma valores numéricos.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Se recoge información de tres fuentes diferentes. Se tienen datos de casos reportes genéricos de COVID-19, de reportes de vacunación en los últimos meses y de casos diarios con diferenciación de raza y etnia.
 
-```{r cars}
-summary(cars)
+```{r message=FALSE, echo=FALSE}
+
+library(tidyverse)
+library(MASS)
+library(caret)
+library(dplyr)
+library(data.table)
+library(corrplot)
+library(GGally)
+library(glmnet)
 ```
 
-## Including Plots
+## Preparación de los datos
 
-You can also embed plots, for example:
+Partimos del conjunto de datos del ejercicio de GLM que fue tomado https://covidtracking.com/data. Aplicamos los mismos filtros en la limpieza de información. Al incluir datos de vacunación en el análisis, solo se cuenta con dichos datos a partir del 24 de enero de 2021. Por esta razón, se ha decidido tomar solo los datos posteriores al 1ro de octubre de 2020 en la base de datos de casos diarios, para no tener desbalanceo respecto a los datos de vacunados.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+data <- read.csv(file = 'data/covid_data_us.csv')
+data$Last_Update <- as.Date(data$Last_Update)
+data$Date <- as.Date(data$Date)
+#covid.data <- na.omit(covid.data)
+data <- data %>% 
+  dplyr::select(Province_State, Lat, Long_, Confirmed, Deaths, Recovered, Active, Incident_Rate, 
+         Total_Test_Results, Case_Fatality_Ratio, 
+         Testing_Rate, Date) %>% 
+  dplyr::filter(Date >= "2020-10-01") %>% 
+  dplyr::arrange(Date)
+summary(data)
+```
+El conjunto de datos que muestra el proceso de vacunación en Estados Unidos fue tomado de https://github.com/COVID19Tracking/covid-tracking-data. Este repositorio de GitHub guarda información de la cantidad de personas vacunadas, diferenciado entre la primera y segunda dosis, y organizada según el estado y la fecha.
+
+```{r}
+vaccine.data <- read.csv('data/cdc_vaccinations_ltc_timeseries_daily.csv')
+vaccine.data$Date <- as.Date(vaccine.data$Date)
+vaccine.data <- vaccine.data %>% 
+  dplyr::select(Date, Location, LongName, Census2019, Administered_Fed_LTC, Administered_Fed_LTC_Dose1, Administered_Fed_LTC_Dose2)
+summary(vaccine.data)
+```
+ 
+```{r}
+location.name = unique(vaccine.data[c('Location', 'LongName')])
+covid.data <- merge(data, location.name, by.x = c('Province_State'), by.y=c('LongName'), all.x=TRUE)
+merged.data <- merge(covid.data, vaccine.data, by.x = c('Location', 'Date'), by.y=c('Location', 'Date'), all.x=TRUE) 
+merged.data <- merged.data[c(-14, -15)] 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r, echo=FALSE}
+summary(merged.data)
+```
+El conjunto de fue tomado de The Covid Racial Data Tracker (https://covidtracking.com/race). En este *dataset* se han compilado los datos de raza y etnia que los estados reportan para varias categorías de datos de COVID-19. Contiene 54 variables de acuerdo a categorías de raza y etnia. En este caso, solo se preservan las columnas relacionadas con el color de la piel.
+
+```{r, warning=FALSE}
+etnicity.data <- read.csv('data/CRDT Data - CRDT.csv')
+etnicity.data$Date <- as.character(etnicity.data$Date)
+etnicity.data$Cases_Black <- as.numeric(etnicity.data$Cases_Black)
+etnicity.data$Date <- as.Date(etnicity.data$Date, format = "%Y%m%d")
+etnicity.data <- etnicity.data %>% 
+  dplyr::select(Date, State, Cases_White, Cases_Black, Deaths_White, Deaths_Black, Hosp_Total, Hosp_White, Hosp_Black)
+etnicity.data <- merge(etnicity.data, location.name, by.x = 'State', by.y='Location', all.x = TRUE)
+```
+Para evitar el sesgo en el análisis respecto al color de piel se incluye información étnica de todos los estados. Se adicionan variables que explican la población total y la cantidad de personas con piel de color blanca y negra.
+
+```{r}
+race.data <- read.csv('data/raw_data.csv', sep = ',' )
+race.data <- race.data[,c(-5)]
+colnames(race.data) <- c('Location', 'White', 'Black', 'Population')
+summary(race.data)
+```
+Se mezclan los datos relacionados con información racial.
+
+```{r}
+racial.data <- merge(etnicity.data, race.data, by.x = 'LongName', by.y = 'Location', all.x = TRUE)
+racial.data <- racial.data[,-2]
+```
+
+Finalmente, para conformar el conjunto de datos sobre el que se realizará el análisis se mezclan todos los datos en un único dataframe teniendo en cuenta la localidad y la fecha a la que pertenece cada observación.
+
+```{r}
+data.df <- merge(merged.data, racial.data, by.x=c('Date', 'Province_State'), by.y=c('Date', 'LongName'))
+data.df[is.na(data.df)] <- 0
+data.df <- data.df[,-3]
+summary(data.df)
+```
+Luego de mezclar toda la información el conjunto de datos a utilizar contiene 2.150 observaciones y 25 variables.
+
+## Análisis descriptivo
+
+```{r warning=FALSE}
+set.seed(42)
+spl = createDataPartition(data.df$Deaths, p = 0.8, list = FALSE)  # 80% for training
+
+train = data.df[spl,]
+test = data.df[-spl,]
+
+dim(train)
+summary(train)
+```
+
+```{r}
+ggplot(train, aes(Deaths)) + geom_density(fill="lightblue") + 
+  xlab("Deaths") + ggtitle("Deaths distribution")
+```
+Según muestra el gráfico la mayor parte de los días en un estado hay entre 0 y 5000 fallecidos aproximadamente. Sin embargo, también se puede observar que hay días donde la cantidad de fallecidos supera los 30.000
+
+Visualicemos la función de densidad en función del logaritmo de la variable objetivo. 
+
+```{r}
+ggplot(train, aes(log(Deaths))) + geom_density(fill="lightblue") + 
+  xlab("Deaths") + ggtitle("Deaths distribution")
+```
+```{r}
+deaths_by_state = data.df %>% 
+  dplyr::group_by(Province_State) %>% 
+  dplyr::summarise(deaths = sum(Deaths), population = first(Population)) 
+
+deaths_by_state %>% 
+  ggplot(aes(x= Province_State, y = deaths, fill=deaths)) +
+  geom_bar(stat='identity') + 
+  coord_flip()
+```
+En el siguiente gráfico se muestra la cantidad de casos confirmados y la cantidad de fallecidos. Los colores se incluyen para diferenciar las curvas en cuanto a las ciudades. Se puede observar que, en general, las muertes tienden a aumentar mientras aumentan los positivos. Debemos tener en cuenta que el gráfico no muestra las muertes que pudieron causar esos casos positivos, para eso habría que hacer el análisis en los próximos 14 días pero sí nos da una medida de cómo pueden estar relacionadas estas variables.
+
+```{r}
+data.df %>% 
+  ggplot(aes(x = Confirmed, y = Deaths, color = Province_State)) + 
+  geom_point() +
+  guides(color = FALSE)
+```
+
+La siguiente imagen muestra la función de densidad de los fallecidos pero esta vez haciendo una distinción por el estado. Aunque no se puede detectar qué curva pertenece a qué estado específicamente, las curvas muestran un comportamiento similar al la total presentada anteriormente.
+
+```{r}
+ggplot(train, aes(log(Deaths))) + geom_density(aes(group=Province_State, colour=Province_State, fill=Province_State), alpha=0.1) + 
+  ggtitle("Deaths distribution")
+```
+```{r}
+colnames(data.df)
+```
+En el conjunto e datos tenemos una gran cantidad de variables. SIn embargo, no todas pueden ser introducidas en el modelo porque esto puede llevar a un sobre-ajuste de los datos por parte de los modelos. En la siguiente imagen se muestra la correlación de algunas de las variables numéricas.
+
+
+```{r}
+numeric_cols = sapply(data.df, is.numeric)
+ggcorr_data <- data.df %>% 
+  dplyr::select(Confirmed, Deaths, Recovered, Active, Incident_Rate, Total_Test_Results, Testing_Rate, Administered_Fed_LTC, Cases_White, Cases_Black, Hosp_White, Hosp_Black, Hosp_Total)
+ggcorr(ggcorr_data, label = T)
+
+```
+Tras realizar un analísis descriptivo de los datos, se eliminan del análisis algunas variables para evitar multicolinealidad. En la matriz de correlación se observa que la variable **Active** y **Incident_Rate** tienen una alta correlación positiva por lo tanto es aconsejable eliminar una de las dos. Puesto que la variable Active se puede calcular en función de los casos **Confirmed**, **Recovered** y *Deaths*, la eliminamos. Asimismo, la variable **Incident_Rate** tiene correlación lineal con **Confirmed** por lo que la obviamos también. Existen otros pares de variables que tienen una alta correlación, sin embargo, como nuestro análisis está enfocado en determinar qué factores influyen en la mortalidad de COVID las preservaremos para valorar su aporte a los modelos.
+
+
+```{r echo=FALSE}
+subset <- data.df %>% 
+  dplyr::select(Province_State, Deaths, Confirmed, Recovered, Total_Test_Results, Testing_Rate, 
+         Administered_Fed_LTC, Cases_White, Cases_Black, Deaths_White, 
+         Deaths_Black, Hosp_White, Hosp_Black, Hosp_Total, White, Black)
+```
+
+
+## Modelos de Regresión
+
+En esta sección se desarrollan y comparan entre sí un conjunto de modelos de regresión que dan solución al problema de predicción actual. Aunque hemos comprobado la complejidad de la distribución de los datos, inicialmente se presentan modelos de regresión lineal simples, con el objetivo de comparar y contar con un *baseline* que permita establecer un umbral de mejora. Teniendo en cuenta que en los datos existe un error inherente que no puede ser explicado por los modelos matemáticos, esto nos permitirá medir el rendimiento de los modelos avanzados que serán presentados posteriormente.
+
+
+##  Modelos de Regresión Lineal
+
+Los modelos de regresión lineal al expresar la variable objetivo en función del resto de variables nos permiten de forma trivial medir la significancia de cada predictor. Por lo tanto, son útiles para seleccionar la cantidad y cuáles variables son adecuadas para explicar. En este trabajo, se desarrollan inicialmente un grupo de modelos lineales para entender la importancia de las variables en la predicción de la variable objetivo.
+
+* El primer modelo tomará el predictor que se ha detectado anteriormente que más influye, que es la cantidad de casos confirmados.
+
+```{r}
+lm <- lm(log(Deaths) ~ Confirmed, data=train)
+summary(lm)
+```
+El modelo alcanza un R2 del 48%, lo cual reafirma que estas variables son importantes para determinar la variable dependiente. 
+
+```{r}
+lm.pred.log <- predict(lm, newdata=test)
+
+R2 = cor(log(test$Deaths), lm.pred.log)^2
+R2
+
+MAPE = mean(abs(log(test$Deaths)- lm.pred.log)/log(test$Deaths))
+MAPE
+
+RMSE <- sqrt(mean((lm.pred.log - log(test$Deaths))^2))
+RMSE
+
+```
+Para evaluar el modelo se calcula e R2, el Error absoluto medio porcentual (MAPE, del inglés *Mean absolute percentage error*) y el Error cuadrático medio (RMSE, del inglés *Root Mean Squared Error*). El R2 sobre el conjunto de test es más pequeño pero muy similar al de entrenamiento, como es de esperar, porque al utilizar tan pocas variables no puede existir *overfitting* aún.
+
+* El segundo modelo de regresión lineal es el que utiliza todas las variables. No se tienen en cuenta solo algunas que no aportan información más que identificativa a los datos y el modelo completo identifica que están correlacionadas con la variable dependiente y le asigna betas NAs.
+
+
+```{r}
+lm.all <- lm(log(Deaths) ~ .- Lat -Long_ -Population -Black -White, data=train)
+summary(lm.all) 
+```
+En este modelo, que incluyen todos los predictores posibles, está sobre-ajustado obteniendo un R2 de un 98%.
+
+```{r}
+lm.pred.log.all <- predict(lm.all, newdata=test)
+
+R2 = cor(log(test$Deaths), lm.pred.log.all)^2
+R2
+
+MAPE = mean(abs(log(test$Deaths)- lm.pred.log.all)/log(test$Deaths))
+MAPE
+
+RMSE <- sqrt(mean((lm.pred.log.all - log(test$Deaths))^2))
+RMSE
+
+```
+En este modelo el R2 da mayor en el conjunto de test que en el de entrenamiento, lo cual es muy inusual porque significa que el modelo aprendió mejor algo que no le fue enseñado. Sin embargo, la diferencia es muy pequeña. Este sobreajuste nos lleva a que las predicciones sean muy buenas pero los betas son muy malos, y por lo tanto, no pueden ser utilizados para explicar el modelo.
+
+Por último, presentaremos el más simple de los modelos y que predice con un valor fijo. Este modelo es el que usaremos como benchmark, porque es el equivalente a predecir con un número aleatorio.
+
+* El tercer modelo de regresión lineal es el que predice con la media y nos referiremos a él como *Naive*.
+
+```{r}
+lm.naive <- lm(log(Deaths) ~ 1, data=train)
+summary(lm.naive) 
+```
+```{r}
+lm.naive.pred <- predict(lm.naive, newdata=test)
+
+MAPE = mean(abs(log(test$Deaths)- lm.naive.pred)/log(test$Deaths))
+MAPE
+
+RMSE <- sqrt(mean((lm.naive.pred - log(test$Deaths))^2))
+RMSE
+```
+En este caso, no se puede utilizar el R2 porque la desviación estándar de una constante es 0 por lo que para posteriores análisis con modelos avanzados solo podremos utilizar el RMSE y el MAPE para comparar con el modelo *naive*. Este modelo nos ayuda a decidir cuán grande es el error irreducible.
+
+## Modelos de regresión Avanzada
+
+En esta sección nos concentramos en seleccionar dos modelos: un primer modelo, lo llamaremos **Modelo Explicativo** que nos permita interpretar las variables y explicar la predicción y otro modelo, **Modelo Predictivo** que se centre en obtener buenas predicciones.
+
+### Modelo Explicativo
+
+Para el desarrollo del modelo explicativo utilizaremos todo el conjunto de datos. El objetivo es obtener un modelo que involucre las variables más relevantes y que el número de variables sea adecuado para la interpretación, Con el fin de simplificar la explicabilidad, procuraremos que las variables no tengan ninguna transformación.
+
+Se desarrollan dos modelos;
+
+* Basado en selección de variables: 
+* Basado en regresión lasso: 
+
+Los modelos llamados **ensembles** se han descartado en la producción de este modelo explicable porque realizan transformaciones a las variables que son muy difíciles de explicar.
+
+Lo importante en un modelo explicativo es que tenga un sesgo (error) pequeño. Por esta razón, para seleccionar el primer modelo partimos del modelo lineal que utiliza todas las variables (visto anteriormente) que tiene un alto R2 ajustado y según los betas hacemos una selección de las variables más significativas sobre las cuales se diseña un nuevo modelo. En este caso, para entrenar y evaluar los modelos se utiliza el método de *cross-validation*.
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     repeats = 5,
+                     number = 10)
+```
+
+Al analizar los coeficientes del modelo lineal completo, teniendo en cuenta cada una de las variables se decide el siguiente modelo. Es evidente en el modelo completo que la variable **Province_State** influye mucho en la variable objetivo. Asimismo **Incident_Rate**, pero antes habíamos comprobado que tiene una alta ralación con los casos confirmados. Intentaremos aplicar una interacción entre estas dos variables.
+
+```{r}
+set.seed(43)
+my_lm <- train(log(Deaths) ~ Incident_Rate*Confirmed/Population + Recovered + Province_State + Cases_White*Cases_Black + 
+  Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black,
+                data = train,
+                method = "lm",
+                trControl = ctrl,
+                preProcess=c('center', 'scale')
+)
+
+options(max.print=10000)
+all_output <- data.table(Texto=capture.output(summary(my_lm)))
+all_output[grepl("R-squared",Texto,fixed=T),]
+
+```
+Con este modelo se obtiene un R2 ajustado muy alto, por lo tanto se consigue el objetivo de los modelos explicativos. Apliquemos selección de variables sobre este modelo en base al p-value. Utilizaremos el conjunto de entranamiento inicial para ver la evolución en la selección. SIn embargo, se puede notar que se alcanza un R2 mayor utilizado validación cruzada.
+
+```{r}
+library(olsrr)
+model = log(Deaths) ~ Incident_Rate*Confirmed + Recovered + Province_State + Cases_White*Cases_Black + 
+  Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black
+
+linFit <- lm(model, data=train)
+
+ols_step_forward_p(linFit) # forward based on p-value
+
+```
+La tabla anterior muestra que a partir de 4 variables el modelo predice bien. En este caso, nos quedaremos con este modelo porque se observa un ligero aumento en el R2 en la última iteración.
+
+```{r}
+plot(ols_step_forward_p(linFit))
+```
+Intentemos explicar las variables del modelo.
+
+```{r}
+linFit
+
+```
+Para analizar los coeficientes debemos tener en cuenta que estamos prediciendo el log de la cantidad de muertes. Es evidente que la variable más importante es el estado al que pertenece la observación. #TODO
+
+
+```{r}
+test_results = data.frame(deaths = log(test$Deaths))
+```
+
+### Modelo Predictivo
+
+Esta sección está dedicada a encontrar un modelo para predecir, donde no es tan importante la interpretabilidad de las decisiones. Se plantean varios modelos a utilizar. En este caso se implementan los siguientes modelos:
+
+* Regresión lineal
+* Regresión lineal robusta
+* Ridge
+* Lasso
+
+Los resultados de cada uno de los modelos serán comparados en función del RMSE y nos quedaremos con el que menor error alcanza. Cada uno de los modelos será probado con todas las variables y con una elección resultado de aplicar selección de variables stepwise. Además, para la evaluación será utilizado el método de cross-validation.
+
+Inicialmente se aplica selección de variables retomando nuestros modelos completo y naive. Recordar que aunque le hemos llamado modelo completo algunas variables se han eliminado como fue explicado con anterioridad.
+
+```{r echo=FALSE}
+
+m_step1 <- step(lm.all, lm.naive, direction = 'both')
+
+```
+Como resultado de la aplicación del método de stepwise nos quedamos con el siguiente modelo que llamaremos **wise.model**:
+
+```{r}
+lm.complete <- log(Deaths) ~ .- Lat -Long_ -Population -Black -White
+
+wise.model <- log(Deaths) ~ Date + Province_State + Confirmed + Recovered + 
+    Incident_Rate + Total_Test_Results + Case_Fatality_Ratio + 
+    Testing_Rate + Administered_Fed_LTC + Administered_Fed_LTC_Dose1 + 
+    Administered_Fed_LTC_Dose2 + Cases_White + Deaths_White + 
+    Deaths_Black + Hosp_Total + Hosp_White + Hosp_Black
+
+```
+
+
+* Regresión lineal (con los modelos lm.complete y wise.model)
+
+```{r}
+lm.complete.t <- train(lm.complete,
+                data = train,
+                method = "lm",
+                trControl = ctrl,
+                preProcess=c('center', 'scale'))
+
+wise.model.t = train(wise.model,
+                data = train,
+                method = "lm",
+                trControl = ctrl,
+                preProcess=c('center', 'scale'))
+```
+
+* Regresión robusta (con los modelos lm.complete y wise.model)
+
+```{r}
+
+rlm.complete <- rlm(lm.complete,data=train)
+
+rlm.wise <- rlm(wise.model,data=train)
+
+```
+
+* Ridge
+
+```{r}
+ridge_grid <- expand.grid(lambda = seq(0, .1, length = 100))
+
+ridge.complete <- train(lm.complete, data = train,
+                    method='ridge',
+                    preProc=c('scale', 'center'),
+                    tuneGrid = ridge_grid,
+                    trControl=ctrl)
+
+
+ridge.wise <- train(wise.model, data = train,
+                    method='ridge',
+                    preProc=c('scale', 'center'),
+                    tuneGrid = ridge_grid,
+                    trControl=ctrl)
+
+plot(ridge.wise)
+ridge.wise$bestTune
+postResample(pred = test_results$ridge,  obs = test_results$price)
+
+
+```
+* Lasso
+
+```{r}
+lasso_grid <- expand.grid(fraction = seq(.01, 1, length = 20))
+
+lasso.complete <- train(lm.complete, data = train,
+                    method='lasso',
+                    preProc=c('scale','center'),
+                    tuneGrid = lasso_grid,
+                    trControl=ctrl)
+
+lasso.wise <- train(wise.model, data = train,
+                    method='lasso',
+                    preProc=c('scale','center'),
+                    tuneGrid = lasso_grid,
+                    trControl=ctrl)
+
+plot(lasso_tune)
+lasso_tune$bestTune
+test_results$lasso <- predict(lasso_tune, testing)
+postResample(pred = test_results$lasso,  obs = test_results$price)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+test_results$lm.completed = predict(lm.complete.t, test)
+test_results$lm.wise = predict(wise.model.t, test)
+
+test_results$rlm.complete = predict(rlm.complete, test)
+test_results$rlm.wise = predict(rlm.wise, test)
+
+test_results$ridge.complete <- predict(ridge.complete, test)
+test_results$ridge.wise <- predict(ridge_tune, test)
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+tuneGrid <- expand.grid(alpha = 1, lambda = seq(210 ,220, length = 100))
+
+lasso_tune <- train(Deaths~., 
+                    data = train,
+                    method = "glmnet",
+                    tuneGrid = tuneGrid,
+                    trControl = ctrl,
+                    preProcess=c('center', 'scale')
+)
+
+train_results <- predict(lasso_tune, train)
+postResample(pred = train_results,  obs = train$Deaths)
+```
+
+
+```{r}
+train_results <- predict(lasso_tune, data_exp)
+postResample(pred = train_results,  obs = data_exp$SalePrice)
+```
+
+
+### Modelo Predictivo
+
+
+
+
+
+
+
+
+
+
+
